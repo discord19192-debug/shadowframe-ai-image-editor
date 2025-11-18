@@ -30,7 +30,7 @@ jobs:
         run: bun install
 
       - name: Build web app
-        run: npx expo export -p web
+        run: bun run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
