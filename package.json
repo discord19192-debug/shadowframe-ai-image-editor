@@ -38,6 +38,7 @@
     "expo-symbols": "~1.0.7",
     "expo-system-ui": "~6.0.8",
     "expo-web-browser": "~15.0.8",
+    "gh-pages": "^6.3.0",
     "hono": "^4.10.6",
     "lucide-react-native": "^0.475.0",
     "nativewind": "^4.1.23",
