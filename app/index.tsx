@@ -35,6 +35,7 @@ import Colors from '@/constants/colors';
 import { useImages } from '@/contexts/ImagesContext';
 
 type ActiveTab = 'single' | 'merge';
+type AspectRatio = '16:9' | '9:16' | '3:4' | '4:3' | '1:1';
 
 interface EditHistoryItem {
   image: string;
@@ -60,6 +61,7 @@ export default function EditorScreen() {
   const [editHistory, setEditHistory] = useState<EditHistoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('single');
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [permission, requestPermission] = MediaLibrary.usePermissions();
 
@@ -142,7 +144,7 @@ export default function EditorScreen() {
       const body = JSON.stringify({
         prompt: promptValue,
         images: payload,
-        aspectRatio: activeTab === 'merge' ? '3:4' : '16:9',
+        aspectRatio: aspectRatio,
       });
       let response: Response;
       try {
@@ -191,7 +193,7 @@ export default function EditorScreen() {
       console.log(logTag, 'Edit request succeeded');
       return { imageUri: composed, promptUsed: promptValue };
     },
-    [activeTab, buildImagePayload, parseErrorResponse],
+    [aspectRatio, activeTab, buildImagePayload, parseErrorResponse],
   );
 
 
@@ -372,6 +374,51 @@ export default function EditorScreen() {
           <Merge size={20} color={activeTab === 'merge' ? Colors.text : Colors.textSecondary} />
           <Text style={[styles.tabText, activeTab === 'merge' && styles.tabTextActive]}>Merge Photos</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.aspectRatioContainer}>
+        <Text style={styles.aspectRatioLabel}>Aspect Ratio</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.aspectRatioScroll}
+        >
+          <TouchableOpacity
+            testID="aspect-16-9"
+            style={[styles.aspectRatioButton, aspectRatio === '16:9' && styles.aspectRatioButtonActive]}
+            onPress={() => setAspectRatio('16:9')}
+          >
+            <Text style={[styles.aspectRatioText, aspectRatio === '16:9' && styles.aspectRatioTextActive]}>16:9 Landscape</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="aspect-9-16"
+            style={[styles.aspectRatioButton, aspectRatio === '9:16' && styles.aspectRatioButtonActive]}
+            onPress={() => setAspectRatio('9:16')}
+          >
+            <Text style={[styles.aspectRatioText, aspectRatio === '9:16' && styles.aspectRatioTextActive]}>9:16 Portrait</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="aspect-4-3"
+            style={[styles.aspectRatioButton, aspectRatio === '4:3' && styles.aspectRatioButtonActive]}
+            onPress={() => setAspectRatio('4:3')}
+          >
+            <Text style={[styles.aspectRatioText, aspectRatio === '4:3' && styles.aspectRatioTextActive]}>4:3 Landscape</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="aspect-3-4"
+            style={[styles.aspectRatioButton, aspectRatio === '3:4' && styles.aspectRatioButtonActive]}
+            onPress={() => setAspectRatio('3:4')}
+          >
+            <Text style={[styles.aspectRatioText, aspectRatio === '3:4' && styles.aspectRatioTextActive]}>3:4 Portrait</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="aspect-1-1"
+            style={[styles.aspectRatioButton, aspectRatio === '1:1' && styles.aspectRatioButtonActive]}
+            onPress={() => setAspectRatio('1:1')}
+          >
+            <Text style={[styles.aspectRatioText, aspectRatio === '1:1' && styles.aspectRatioTextActive]}>1:1 Square</Text>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
 
       <ScrollView
@@ -907,6 +954,41 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   tabTextActive: {
+    color: Colors.text,
+  },
+  aspectRatioContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  aspectRatioLabel: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  aspectRatioScroll: {
+    gap: 8,
+  },
+  aspectRatioButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  aspectRatioButtonActive: {
+    backgroundColor: Colors.purple,
+    borderColor: Colors.purple,
+  },
+  aspectRatioText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+  },
+  aspectRatioTextActive: {
     color: Colors.text,
   },
 });
