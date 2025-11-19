@@ -130,7 +130,27 @@ export default function EditorScreen() {
       }
 
       const data = await response.json();
-      console.log('Received edited image');
+      console.log('Edit response payload keys:', Object.keys(data ?? {}));
+
+      if (!data || !data.image || !data.image.base64Data || !data.image.mimeType) {
+        console.warn('No edited image returned from API', data);
+        let errorMessage = 'No edited image was returned. Try simplifying the prompt or avoiding sensitive edits.';
+
+        const apiError = typeof data?.error === 'string' ? data.error : undefined;
+        const apiText = typeof data?.text === 'string' ? data.text : undefined;
+        const combinedMessage = `${apiError ?? ''} ${apiText ?? ''}`.trim().toLowerCase();
+
+        if (combinedMessage.length > 0) {
+          if (combinedMessage.includes('unable to fulfill') || combinedMessage.includes('cannot generate')) {
+            errorMessage = 'The edit request was declined. Try adjusting the prompt to avoid sensitive or restricted content.';
+          } else if (combinedMessage.includes('blocked')) {
+            errorMessage = 'Content was blocked by safety filters. Use neutral, descriptive language and avoid sensitive transformations.';
+          }
+        }
+
+        throw new Error(errorMessage);
+      }
+
       const base64Image = `data:${data.image.mimeType};base64,${data.image.base64Data}`;
       
       setEditHistory((prev) => [
