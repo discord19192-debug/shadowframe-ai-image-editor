@@ -184,8 +184,8 @@ export default function EditorScreen() {
         ]
           .filter((candidate): candidate is string => Boolean(candidate))
           .map((candidate) => candidate.toLowerCase());
-        if (messageCandidates.some((candidate) => candidate.includes('unable') || candidate.includes('cannot'))) {
-          throw new Error('The edit could not be produced. Try simplifying the instructions or removing sensitive requests.');
+        if (messageCandidates.some((candidate) => candidate.includes('unable') || candidate.includes('cannot') || candidate.includes('blocked') || candidate.includes('safety'))) {
+          throw new Error('Request blocked by content safety. Use neutral, descriptive language. Describe colors, lighting, composition, and style instead of sensitive content.');
         }
         throw new Error('No edited image was produced. Try a different prompt.');
       }
@@ -458,8 +458,8 @@ export default function EditorScreen() {
             style={styles.promptInput}
             placeholder={
               activeTab === 'single'
-                ? "e.g., 'Add neon cyberpunk lighting with moody shadows'"
-                : "e.g., 'Blend the face from the first image onto the second in a cinematic portrait style'"
+                ? "e.g., 'Add warm orange lighting from the left side with blue shadows'"
+                : "e.g., 'Combine both images into a single landscape composition with natural lighting'"
             }
             placeholderTextColor={Colors.textTertiary}
             value={prompt}
@@ -468,6 +468,14 @@ export default function EditorScreen() {
             numberOfLines={4}
             textAlignVertical="top"
           />
+
+          <View style={styles.promptTipsContainer}>
+            <Text style={styles.promptTipsTitle}>💡 Tips for best results:</Text>
+            <Text style={styles.promptTip}>• Use descriptive, neutral language</Text>
+            <Text style={styles.promptTip}>• Describe lighting, colors, and composition</Text>
+            <Text style={styles.promptTip}>• Avoid referencing specific people or copyrighted content</Text>
+            <Text style={styles.promptTip}>• Be specific about desired changes</Text>
+          </View>
 
 
 
@@ -713,6 +721,26 @@ const styles = StyleSheet.create({
     minHeight: 120,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  promptTipsContainer: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(138, 43, 226, 0.08)',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 6,
+  },
+  promptTipsTitle: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  promptTip: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 18,
   },
   infoContainer: {
     marginTop: 12,
