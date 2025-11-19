@@ -4,7 +4,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { useMediaLibraryPermissionsSafe } from '@/hooks/useMediaLibraryPermissions';
 import { File, Paths } from 'expo-file-system';
 import { router } from 'expo-router';
-import { Camera, ImagePlus, Sparkles, X, Download, Undo2, AlertCircle, Merge } from 'lucide-react-native';
+import { Camera, ImagePlus, Sparkles, X, Download, Undo2, AlertCircle, Merge, ShieldCheck, Zap } from 'lucide-react-native';
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
@@ -42,6 +42,7 @@ export default function EditorScreen() {
   const [activeTab, setActiveTab] = useState<'single' | 'merge'>('single');
   const [isDownloading, setIsDownloading] = useState(false);
   const [permission, requestPermission] = useMediaLibraryPermissionsSafe();
+  const [safetyMode, setSafetyMode] = useState<'balanced' | 'raw'>('balanced');
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -65,15 +66,24 @@ export default function EditorScreen() {
   };
 
   const generateEdit = async () => {
-    if (images.length === 0 || !prompt.trim()) return;
+    const trimmedPrompt = prompt.trim();
+    if (images.length === 0 || !trimmedPrompt) return;
 
     Keyboard.dismiss();
     setIsGenerating(true);
     setError(null);
 
-    const sanitized = sanitizePrompt(prompt.trim(), activeTab);
-    const sanitizedPromptUsed = sanitized.sanitizedPrompt;
-    setSanitizedDetails(sanitized.wasModified ? sanitized : null);
+    const useRawPrompt = safetyMode === 'raw';
+    let promptForRequest = trimmedPrompt;
+    let sanitizedResult: SanitizedPromptResult | null = null;
+
+    if (!useRawPrompt) {
+      sanitizedResult = sanitizePrompt(trimmedPrompt, activeTab);
+      promptForRequest = sanitizedResult.sanitizedPrompt;
+      setSanitizedDetails(sanitizedResult.wasModified ? sanitizedResult : null);
+    } else {
+      setSanitizedDetails(null);
+    }
 
     try {
       const imageData = images.map((img) => ({
@@ -82,14 +92,14 @@ export default function EditorScreen() {
       }));
 
       console.log('Sending edit request with', imageData.length, 'images');
-      console.log('Using prompt:', sanitized.sanitizedPrompt);
+      console.log('Using prompt:', promptForRequest);
       const response = await fetch('https://toolkit.rork.com/images/edit/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: sanitized.sanitizedPrompt,
+          prompt: promptForRequest,
           images: imageData,
           aspectRatio: '16:9',
         }),
@@ -145,16 +155,20 @@ export default function EditorScreen() {
         ...prev,
         {
           image: base64Image,
-          prompt: sanitizedPromptUsed,
+          prompt: promptForRequest,
           timestamp: Date.now(),
         },
       ]);
       setEditedImage(base64Image);
       setPrompt('');
       setSanitizedDetails(null);
-    } catch (error) {
-      console.error('Error generating image:', error);
-      setError(error instanceof Error ? error.message : 'Failed to generate image');
+    } catch (caughtError) {
+      console.error('Error generating image:', caughtError);
+      if (caughtError instanceof TypeError) {
+        setError('Network error: Unable to reach the image editing service. Please check your connection and try again.');
+      } else {
+        setError(caughtError instanceof Error ? caughtError.message : 'Failed to generate image');
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -337,6 +351,68 @@ export default function EditorScreen() {
               ? 'Describe how you want to transform the image'
               : 'Describe how to merge the two photos'}
           </Text>
+
+          <View style={styles.safetyModeContainer}>
+            <Text style={styles.safetyModeLabel}>Prompt mode</Text>
+            <View style={styles.safetyToggleRow}>
+              <Pressable
+                style={[
+                  styles.safetyToggleButton,
+                  safetyMode === 'balanced' && styles.safetyToggleButtonActive,
+                ]}
+                onPress={() => {
+                  setSafetyMode('balanced');
+                  setSanitizedDetails(null);
+                }}
+                testID="prompt-mode-balanced"
+              >
+                <ShieldCheck
+                  size={16}
+                  color={safetyMode === 'balanced' ? Colors.text : Colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.safetyToggleText,
+                    safetyMode === 'balanced' && styles.safetyToggleTextActive,
+                  ]}
+                >
+                  Balanced Guard
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.safetyToggleButton,
+                  safetyMode === 'raw' && styles.safetyToggleButtonActiveRaw,
+                ]}
+                onPress={() => {
+                  setSafetyMode('raw');
+                  setSanitizedDetails(null);
+                }}
+                testID="prompt-mode-raw"
+              >
+                <Zap
+                  size={16}
+                  color={safetyMode === 'raw' ? Colors.text : Colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.safetyToggleText,
+                    safetyMode === 'raw' && styles.safetyToggleTextActive,
+                  ]}
+                >
+                  Raw Prompt
+                </Text>
+              </Pressable>
+            </View>
+            {safetyMode === 'raw' && (
+              <View style={styles.rawModeNotice} testID="raw-mode-notice">
+                <AlertCircle size={16} color={Colors.warning} />
+                <Text style={styles.rawModeNoticeText}>
+                  Raw prompts skip automatic safety adjustments. Keep requests compliant to avoid blocked generations.
+                </Text>
+              </View>
+            )}
+          </View>
 
           <TextInput
             style={styles.promptInput}
@@ -624,6 +700,66 @@ const styles = StyleSheet.create({
     minHeight: 120,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  safetyModeContainer: {
+    marginTop: 16,
+    gap: 12,
+  },
+  safetyModeLabel: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    color: Colors.textSecondary,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase' as const,
+  },
+  safetyToggleRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  safetyToggleButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  safetyToggleButtonActive: {
+    backgroundColor: Colors.purple,
+    borderColor: Colors.purple,
+  },
+  safetyToggleButtonActiveRaw: {
+    backgroundColor: 'rgba(245, 158, 11, 0.18)',
+    borderColor: Colors.warning,
+  },
+  safetyToggleText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+  },
+  safetyToggleTextActive: {
+    color: Colors.text,
+  },
+  rawModeNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: Colors.warning,
+  },
+  rawModeNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600' as const,
+    color: Colors.warning,
   },
   sanitizedInfo: {
     marginTop: 12,
