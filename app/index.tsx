@@ -35,7 +35,7 @@ import Colors from '@/constants/colors';
 import { useImages } from '@/contexts/ImagesContext';
 
 type ActiveTab = 'single' | 'merge';
-type AspectRatio = '16:9' | '9:16' | '3:4' | '4:3' | '1:1';
+type AspectRatio = '16:9' | '9:16';
 
 interface EditHistoryItem {
   image: string;
@@ -396,27 +396,6 @@ export default function EditorScreen() {
             onPress={() => setAspectRatio('9:16')}
           >
             <Text style={[styles.aspectRatioText, aspectRatio === '9:16' && styles.aspectRatioTextActive]}>9:16 Portrait</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            testID="aspect-4-3"
-            style={[styles.aspectRatioButton, aspectRatio === '4:3' && styles.aspectRatioButtonActive]}
-            onPress={() => setAspectRatio('4:3')}
-          >
-            <Text style={[styles.aspectRatioText, aspectRatio === '4:3' && styles.aspectRatioTextActive]}>4:3 Landscape</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            testID="aspect-3-4"
-            style={[styles.aspectRatioButton, aspectRatio === '3:4' && styles.aspectRatioButtonActive]}
-            onPress={() => setAspectRatio('3:4')}
-          >
-            <Text style={[styles.aspectRatioText, aspectRatio === '3:4' && styles.aspectRatioTextActive]}>3:4 Portrait</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            testID="aspect-1-1"
-            style={[styles.aspectRatioButton, aspectRatio === '1:1' && styles.aspectRatioButtonActive]}
-            onPress={() => setAspectRatio('1:1')}
-          >
-            <Text style={[styles.aspectRatioText, aspectRatio === '1:1' && styles.aspectRatioTextActive]}>1:1 Square</Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
