@@ -30,7 +30,7 @@ jobs:
         run: bun install
 
       - name: Build web app
-        run: bun run build
+        run: bun run vite build
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
