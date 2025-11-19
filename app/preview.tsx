@@ -7,6 +7,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -41,6 +42,11 @@ export default function PreviewScreen() {
   const handleBack = useCallback(() => {
     console.log(logTag, 'Returning to editor');
     router.back();
+  }, []);
+
+  const openPhotopea = useCallback(() => {
+    console.log(logTag, 'Opening Photopea');
+    Linking.openURL('https://www.photopea.com');
   }, []);
 
   const downloadImage = useCallback(async () => {
@@ -117,7 +123,11 @@ export default function PreviewScreen() {
           <View style={styles.photopeaHint} testID="photopea-hint">
             <Info size={14} color={Colors.textTertiary} />
             <Text style={styles.photopeaText}>
-              Use <Text style={styles.photopeaLink}>photopea.com</Text> to remove the Rork logo from photos
+              Use{' '}
+              <Text style={styles.photopeaLink} onPress={openPhotopea}>
+                photopea.com
+              </Text>{' '}
+              to remove the Rork logo from photos
             </Text>
           </View>
 
