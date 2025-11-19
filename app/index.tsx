@@ -4,7 +4,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { useMediaLibraryPermissionsSafe } from '@/hooks/useMediaLibraryPermissions';
 import { File, Paths } from 'expo-file-system';
 import { router } from 'expo-router';
-import { Camera, ImagePlus, Sparkles, X, Download, Undo2, AlertCircle, Merge, ShieldCheck, Zap } from 'lucide-react-native';
+import { Camera, ImagePlus, Sparkles, X, Download, Undo2, AlertCircle, Merge } from 'lucide-react-native';
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
@@ -23,7 +23,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Colors from '@/constants/colors';
 import { useImages } from '@/contexts/ImagesContext';
-import { sanitizePrompt, SanitizedPromptResult } from '@/utils/prompt';
 
 interface EditHistoryItem {
   image: string;
@@ -35,14 +34,12 @@ export default function EditorScreen() {
   const { images, addImage, removeImage, clearImages } = useImages();
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [sanitizedDetails, setSanitizedDetails] = useState<SanitizedPromptResult | null>(null);
   const [editedImage, setEditedImage] = useState<string | null>(null);
   const [editHistory, setEditHistory] = useState<EditHistoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'single' | 'merge'>('single');
   const [isDownloading, setIsDownloading] = useState(false);
   const [permission, requestPermission] = useMediaLibraryPermissionsSafe();
-  const [safetyMode, setSafetyMode] = useState<'balanced' | 'raw'>('balanced');
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -73,17 +70,7 @@ export default function EditorScreen() {
     setIsGenerating(true);
     setError(null);
 
-    const useRawPrompt = safetyMode === 'raw';
-    let promptForRequest = trimmedPrompt;
-    let sanitizedResult: SanitizedPromptResult | null = null;
-
-    if (!useRawPrompt) {
-      sanitizedResult = sanitizePrompt(trimmedPrompt, activeTab);
-      promptForRequest = sanitizedResult.sanitizedPrompt;
-      setSanitizedDetails(sanitizedResult.wasModified ? sanitizedResult : null);
-    } else {
-      setSanitizedDetails(null);
-    }
+    const promptForRequest = trimmedPrompt;
 
     try {
       const imageData = images.map((img) => ({
@@ -108,42 +95,44 @@ export default function EditorScreen() {
       console.log('Response status:', response.status);
       
       if (!response.ok) {
-        let errorMessage = 'Failed to generate image';
+        let errorMessage = 'Failed to generate image. Please try again.';
+
         try {
-          const errorData = await response.json();
-          console.error('API error:', JSON.stringify(errorData, null, 2));
-          
-          if (errorData.error) {
-            const errorStr = typeof errorData.error === 'string' ? errorData.error : JSON.stringify(errorData.error);
-            
-            if (errorStr.includes('BLOCK') || errorStr.toLowerCase().includes('blocked') || errorStr.toLowerCase().includes('safety')) {
-              errorMessage = 'Request blocked. Try rephrasing your instructions or simplifying the edit.';
-            } else if (errorStr.includes('RECITATION')) {
-              errorMessage = 'Request blocked: The prompt may reference copyrighted content. Try describing the edit in your own words.';
-            } else {
-              errorMessage = `Error: ${errorStr}`;
+          const rawError = await response.text();
+          console.error('API error:', rawError);
+
+          let parsed: unknown = null;
+          try {
+            parsed = rawError ? JSON.parse(rawError) : null;
+          } catch (parseJsonError) {
+            console.error('Error parsing JSON error response:', parseJsonError);
+          }
+
+          if (parsed && typeof parsed === 'object' && 'error' in parsed) {
+            const errorValue = (parsed as { error?: unknown }).error;
+            if (typeof errorValue === 'string') {
+              const normalized = errorValue.toLowerCase();
+              if (normalized.includes('rate limit') || response.status === 429) {
+                errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
+              } else if (normalized.includes('timeout')) {
+                errorMessage = 'The request timed out. Please try again.';
+              } else {
+                errorMessage = 'Unable to process that request. Please try a different description.';
+              }
             }
-          } else if (response.status === 422) {
-            errorMessage = 'Invalid request. Please check your images and prompt.';
+          }
+
+          if (response.status === 422) {
+            errorMessage = 'Invalid request. Please verify your images and instructions.';
           } else if (response.status === 429) {
             errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
           } else if (response.status >= 500) {
             errorMessage = 'Server error. Please try again in a moment.';
           }
-        } catch (e) {
-          console.error('Error parsing error response:', e);
-          try {
-            const errorText = await response.text();
-            console.error('Error text:', errorText);
-            if (errorText.toLowerCase().includes('blocked') || errorText.toLowerCase().includes('safety')) {
-              errorMessage = 'Request blocked. Try rephrasing your instructions or simplifying the edit.';
-            } else {
-              errorMessage = `Request failed with status ${response.status}. Please try again.`;
-            }
-          } catch {
-            errorMessage = `Request failed with status ${response.status}. Please try again.`;
-          }
+        } catch (responseHandlingError) {
+          console.error('Error handling failed response:', responseHandlingError);
         }
+
         throw new Error(errorMessage);
       }
 
@@ -161,7 +150,6 @@ export default function EditorScreen() {
       ]);
       setEditedImage(base64Image);
       setPrompt('');
-      setSanitizedDetails(null);
     } catch (caughtError) {
       console.error('Error generating image:', caughtError);
       if (caughtError instanceof TypeError) {
@@ -352,68 +340,6 @@ export default function EditorScreen() {
               : 'Describe how to merge the two photos'}
           </Text>
 
-          <View style={styles.safetyModeContainer}>
-            <Text style={styles.safetyModeLabel}>Prompt mode</Text>
-            <View style={styles.safetyToggleRow}>
-              <Pressable
-                style={[
-                  styles.safetyToggleButton,
-                  safetyMode === 'balanced' && styles.safetyToggleButtonActive,
-                ]}
-                onPress={() => {
-                  setSafetyMode('balanced');
-                  setSanitizedDetails(null);
-                }}
-                testID="prompt-mode-balanced"
-              >
-                <ShieldCheck
-                  size={16}
-                  color={safetyMode === 'balanced' ? Colors.text : Colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.safetyToggleText,
-                    safetyMode === 'balanced' && styles.safetyToggleTextActive,
-                  ]}
-                >
-                  Guided Mode
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.safetyToggleButton,
-                  safetyMode === 'raw' && styles.safetyToggleButtonActiveRaw,
-                ]}
-                onPress={() => {
-                  setSafetyMode('raw');
-                  setSanitizedDetails(null);
-                }}
-                testID="prompt-mode-raw"
-              >
-                <Zap
-                  size={16}
-                  color={safetyMode === 'raw' ? Colors.text : Colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.safetyToggleText,
-                    safetyMode === 'raw' && styles.safetyToggleTextActive,
-                  ]}
-                >
-                  Raw Prompt
-                </Text>
-              </Pressable>
-            </View>
-            {safetyMode === 'raw' && (
-              <View style={styles.rawModeNotice} testID="raw-mode-notice">
-                <AlertCircle size={16} color={Colors.warning} />
-                <Text style={styles.rawModeNoticeText}>
-                  Raw prompts skip automatic safety adjustments. Keep requests compliant to avoid blocked generations.
-                </Text>
-              </View>
-            )}
-          </View>
-
           <TextInput
             style={styles.promptInput}
             placeholder={
@@ -423,36 +349,11 @@ export default function EditorScreen() {
             }
             placeholderTextColor={Colors.textTertiary}
             value={prompt}
-            onChangeText={(value) => {
-              setPrompt(value);
-              if (sanitizedDetails) {
-                setSanitizedDetails(null);
-              }
-            }}
+            onChangeText={setPrompt}
             multiline
             numberOfLines={4}
             textAlignVertical="top"
           />
-
-          {sanitizedDetails && (
-            <View style={styles.sanitizedInfo} testID="sanitized-prompt-notice">
-              <View style={styles.sanitizedInfoHeader}>
-                <Sparkles size={18} color={Colors.accent} />
-                <Text style={styles.sanitizedInfoTitle}>Prompt refined for safety</Text>
-              </View>
-              <Text style={styles.sanitizedInfoPrompt}>{sanitizedDetails.sanitizedPrompt}</Text>
-              {sanitizedDetails.warnings.length > 0 && (
-                <View style={styles.sanitizedInfoWarnings}>
-                  {sanitizedDetails.warnings.map((warning, index) => (
-                    <View key={`${warning}-${index}`} style={styles.sanitizedInfoBullet}>
-                      <View style={styles.sanitizedInfoDot} />
-                      <Text style={styles.sanitizedInfoWarning}>{warning}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-          )}
 
           {error && (
             <View style={styles.errorContainer}>
@@ -700,111 +601,6 @@ const styles = StyleSheet.create({
     minHeight: 120,
     borderWidth: 1,
     borderColor: Colors.border,
-  },
-  safetyModeContainer: {
-    marginTop: 16,
-    gap: 12,
-  },
-  safetyModeLabel: {
-    fontSize: 12,
-    fontWeight: '700' as const,
-    color: Colors.textSecondary,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase' as const,
-  },
-  safetyToggleRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  safetyToggleButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  safetyToggleButtonActive: {
-    backgroundColor: Colors.purple,
-    borderColor: Colors.purple,
-  },
-  safetyToggleButtonActiveRaw: {
-    backgroundColor: 'rgba(245, 158, 11, 0.18)',
-    borderColor: Colors.warning,
-  },
-  safetyToggleText: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    color: Colors.textSecondary,
-  },
-  safetyToggleTextActive: {
-    color: Colors.text,
-  },
-  rawModeNotice: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-    borderWidth: 1,
-    borderColor: Colors.warning,
-  },
-  rawModeNoticeText: {
-    flex: 1,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600' as const,
-    color: Colors.warning,
-  },
-  sanitizedInfo: {
-    marginTop: 12,
-    backgroundColor: Colors.surfaceLight,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 12,
-  },
-  sanitizedInfoHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  sanitizedInfoTitle: {
-    fontSize: 14,
-    fontWeight: '700' as const,
-    color: Colors.accent,
-  },
-  sanitizedInfoPrompt: {
-    fontSize: 14,
-    color: Colors.text,
-    lineHeight: 20,
-  },
-  sanitizedInfoWarnings: {
-    gap: 8,
-  },
-  sanitizedInfoBullet: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  sanitizedInfoDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.purpleLight,
-    marginTop: 6,
-  },
-  sanitizedInfoWarning: {
-    flex: 1,
-    fontSize: 12,
-    color: Colors.textSecondary,
-    lineHeight: 16,
   },
   generateButton: {
     marginTop: 16,
