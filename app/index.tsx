@@ -1,10 +1,21 @@
+import { generateText } from '@rork-ai/toolkit-sdk';
 import { Image } from 'expo-image';
+import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
-import { File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
-import { Camera, ImagePlus, Sparkles, X, Download, Undo2, AlertCircle, Merge } from 'lucide-react-native';
-import React, { useState } from 'react';
+import {
+  AlertCircle,
+  Camera,
+  Download,
+  ImagePlus,
+  Merge,
+  Sparkles,
+  Undo2,
+  X,
+} from 'lucide-react-native';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -23,235 +34,343 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 import { useImages } from '@/contexts/ImagesContext';
 
+type ActiveTab = 'single' | 'merge';
+
 interface EditHistoryItem {
   image: string;
   prompt: string;
   timestamp: number;
 }
 
+const logTag = '[ShadowFrame Editor]' as const;
+
+function resolveWritableDirectory(): string | null {
+  const fileSystem = FileSystem as unknown as {
+    cacheDirectory?: string | null;
+    documentDirectory?: string | null;
+  };
+  return fileSystem.cacheDirectory ?? fileSystem.documentDirectory ?? null;
+}
+
 export default function EditorScreen() {
   const { images, addImage, removeImage, clearImages } = useImages();
-  const [prompt, setPrompt] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [prompt, setPrompt] = useState<string>('');
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [autoRetrying, setAutoRetrying] = useState<boolean>(false);
   const [editedImage, setEditedImage] = useState<string | null>(null);
   const [editHistory, setEditHistory] = useState<EditHistoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'single' | 'merge'>('single');
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [infoBanner, setInfoBanner] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('single');
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [permission, requestPermission] = MediaLibrary.usePermissions();
 
-  const pickImage = async () => {
+  const triggerSuccessHaptics = useCallback(() => {
+    if (Platform.OS !== 'web') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch((hapticsError) => {
+        console.log(logTag, 'Success haptics error', hapticsError);
+      });
+    } else {
+      console.log(logTag, 'Success haptics skipped on web');
+    }
+  }, []);
+
+  const triggerFailureHaptics = useCallback(() => {
+    if (Platform.OS !== 'web') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch((hapticsError) => {
+        console.log(logTag, 'Failure haptics error', hapticsError);
+      });
+    } else {
+      console.log(logTag, 'Failure haptics skipped on web');
+    }
+  }, []);
+
+  const buildImagePayload = useCallback(() => {
+    console.log(logTag, 'Preparing payload for', images.length, 'image(s)');
+    return images.map((img) => ({
+      type: 'image' as const,
+      image: img.base64,
+    }));
+  }, [images]);
+
+  const parseErrorResponse = useCallback(async (response: Response) => {
+    const statusText = `Request failed with status ${response.status}`;
+    try {
+      const jsonData = await response.clone().json();
+      console.log(logTag, 'Error response JSON', jsonData);
+      const serialized = typeof jsonData?.error === 'string' ? jsonData.error : JSON.stringify(jsonData?.error ?? {});
+      const lower = serialized.toLowerCase();
+      if (lower.includes('blocked') || lower.includes('safety')) {
+        return 'The request was blocked. Try rewriting the instructions with neutral, descriptive language and avoid sensitive transformations.';
+      }
+      if (lower.includes('recitation')) {
+        return 'The edit references protected content. Describe the change without referencing specific copyrighted material.';
+      }
+      if (response.status === 422) {
+        return 'The edit request was invalid. Check that the prompt and images are supported.';
+      }
+      if (response.status === 429) {
+        return 'Too many requests in a short time. Please wait a few seconds before trying again.';
+      }
+      return serialized.length > 0 ? serialized : statusText;
+    } catch (jsonError) {
+      console.log(logTag, 'Error parsing JSON error payload', jsonError);
+      try {
+        const textData = await response.text();
+        console.log(logTag, 'Error response text', textData);
+        const lower = textData.toLowerCase();
+        if (lower.includes('blocked') || lower.includes('safety')) {
+          return 'The request was blocked. Try rewriting the instructions with neutral, descriptive language and avoid sensitive transformations.';
+        }
+        return textData.length > 0 ? textData : statusText;
+      } catch (textError) {
+        console.log(logTag, 'Error parsing text error payload', textError);
+        return statusText;
+      }
+    }
+  }, []);
+
+  const runEditRequest = useCallback(
+    async (promptValue: string) => {
+      const payload = buildImagePayload();
+      if (payload.length === 0) {
+        throw new Error('Add at least one image to continue.');
+      }
+      console.log(logTag, 'Attempting edit request', {
+        promptLength: promptValue.length,
+        imageCount: payload.length,
+        mode: activeTab,
+      });
+      const body = JSON.stringify({
+        prompt: promptValue,
+        images: payload,
+        aspectRatio: activeTab === 'merge' ? '3:4' : '16:9',
+      });
+      let response: Response;
+      try {
+        response = await fetch('https://toolkit.rork.com/images/edit/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body,
+        });
+      } catch (networkError) {
+        console.log(logTag, 'Network error when calling edit endpoint', networkError);
+        throw new Error('Could not reach the edit service. Check your connection and try again.');
+      }
+      console.log(logTag, 'Edit response status', response.status);
+      if (!response.ok) {
+        const message = await parseErrorResponse(response);
+        throw new Error(message);
+      }
+      let data: unknown;
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        console.log(logTag, 'Failed to parse edit response', jsonError);
+        throw new Error('Received an unexpected response from the edit service.');
+      }
+      const imagePayload = (data as { image?: { base64Data?: string; mimeType?: string }; error?: unknown; text?: unknown }).image;
+      if (!imagePayload?.base64Data || !imagePayload?.mimeType) {
+        console.log(logTag, 'No image payload returned', data);
+        const messageCandidates = [
+          typeof (data as { error?: unknown }).error === 'string' ? (data as { error?: string }).error : undefined,
+          typeof (data as { text?: unknown }).text === 'string' ? (data as { text?: string }).text : undefined,
+        ]
+          .filter((candidate): candidate is string => Boolean(candidate))
+          .map((candidate) => candidate.toLowerCase());
+        if (messageCandidates.some((candidate) => candidate.includes('unable') || candidate.includes('cannot'))) {
+          throw new Error('The edit could not be produced. Try simplifying the instructions or removing sensitive requests.');
+        }
+        throw new Error('No edited image was produced. Try a different prompt.');
+      }
+      const composed = `data:${imagePayload.mimeType};base64,${imagePayload.base64Data}`;
+      console.log(logTag, 'Edit request succeeded');
+      return { imageUri: composed, promptUsed: promptValue };
+    },
+    [activeTab, buildImagePayload, parseErrorResponse],
+  );
+
+  const sanitizePrompt = useCallback(async (rawPrompt: string) => {
+    try {
+      console.log(logTag, 'Sanitizing prompt');
+      const sanitized = await generateText(
+        `Rewrite the following photo editing request so that it is safe, neutral, and compliant with professional guidelines. Keep the creative intent but remove explicit, unsafe, or impersonation language. Return only the rewritten prompt.\n\n${rawPrompt}`,
+      );
+      const trimmed = sanitized.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    } catch (sanitizeError) {
+      console.log(logTag, 'Failed to sanitize prompt', sanitizeError);
+      return null;
+    }
+  }, []);
+
+  const handleSuccess = useCallback(
+    ({ imageUri, promptUsed }: { imageUri: string; promptUsed: string }, banner?: string) => {
+      console.log(logTag, 'Handling successful edit result');
+      setEditHistory((prev) => [
+        ...prev,
+        {
+          image: imageUri,
+          prompt: promptUsed,
+          timestamp: Date.now(),
+        },
+      ]);
+      setEditedImage(imageUri);
+      setPrompt('');
+      setError(null);
+      setInfoBanner(banner ?? null);
+      setAutoRetrying(false);
+      triggerSuccessHaptics();
+    },
+    [triggerSuccessHaptics],
+  );
+
+  const pickImage = useCallback(async () => {
+    console.log(logTag, 'Opening image picker');
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: false,
       quality: 1,
       base64: true,
     });
-
-    if (!result.canceled && result.assets[0]) {
-      const asset = result.assets[0];
-      const base64 = asset.base64;
-      if (base64) {
-        addImage({ uri: asset.uri, base64: base64 });
-      }
+    if (!result.canceled && result.assets[0]?.base64 && result.assets[0]?.uri) {
+      addImage({ uri: result.assets[0].uri, base64: result.assets[0].base64 });
+      console.log(logTag, 'Added image from library');
     }
-  };
+  }, [addImage]);
 
-  const takePhoto = () => {
+  const takePhoto = useCallback(() => {
+    console.log(logTag, 'Navigating to camera screen');
     router.push('/camera');
-  };
+  }, []);
 
-  const generateEdit = async () => {
-    if (images.length === 0 || !prompt.trim()) return;
+  const continueEditing = useCallback(
+    (historyImage: string) => {
+      console.log(logTag, 'Continuing editing from history');
+      clearImages();
+      const base64Data = historyImage.split(',')[1];
+      addImage({ uri: historyImage, base64: base64Data });
+      setEditedImage(historyImage);
+      setInfoBanner(null);
+    },
+    [addImage, clearImages],
+  );
 
+  const undoLastEdit = useCallback(() => {
+    console.log(logTag, 'Undoing last edit');
+    if (editHistory.length > 1) {
+      const updatedHistory = editHistory.slice(0, -1);
+      setEditHistory(updatedHistory);
+      setEditedImage(updatedHistory[updatedHistory.length - 1].image);
+      return;
+    }
+    setEditHistory([]);
+    setEditedImage(null);
+  }, [editHistory]);
+
+  const downloadImage = useCallback(
+    async (imageUri: string) => {
+      console.log(logTag, 'Downloading image');
+      if (Platform.OS === 'web') {
+        if (typeof document !== 'undefined') {
+          const link = document.createElement('a');
+          link.href = imageUri;
+          link.download = `shadowframe-${Date.now()}.png`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        } else {
+          console.log(logTag, 'Document not available for web download');
+        }
+        return;
+      }
+      if (!permission?.granted) {
+        const permissionResult = await requestPermission();
+        if (!permissionResult.granted) {
+          Alert.alert('Permission required', 'Allow gallery access to save your image.');
+          return;
+        }
+      }
+      setIsDownloading(true);
+      try {
+        const filename = `shadowframe-${Date.now()}.png`;
+        const directory = resolveWritableDirectory();
+        if (!directory) {
+          throw new Error('No writable directory available.');
+        }
+        const fileUri = `${directory}${filename}`;
+        const base64Data = imageUri.split(',')[1];
+        await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+          encoding: 'base64',
+        });
+        const asset = await MediaLibrary.createAssetAsync(fileUri);
+        await MediaLibrary.createAlbumAsync('ShadowFrame', asset, false);
+        Alert.alert('Saved', 'Image added to your gallery.');
+      } catch (downloadError) {
+        console.log(logTag, 'Failed to save image', downloadError);
+        Alert.alert('Error', 'Could not save the image.');
+      } finally {
+        setIsDownloading(false);
+      }
+    },
+    [permission?.granted, requestPermission],
+  );
+
+  const generateEdit = useCallback(async () => {
+    if (images.length === 0 || prompt.trim().length === 0) {
+      console.log(logTag, 'Generate pressed without required input');
+      return;
+    }
     Keyboard.dismiss();
     setIsGenerating(true);
+    setAutoRetrying(false);
     setError(null);
-
+    setInfoBanner(null);
+    const trimmedPrompt = prompt.trim();
     try {
-      const imageData = images.map((img) => ({
-        type: 'image' as const,
-        image: img.base64,
-      }));
-
-      console.log('Sending edit request with', imageData.length, 'images');
-      const response = await fetch('https://toolkit.rork.com/images/edit/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: prompt.trim(),
-          images: imageData,
-          aspectRatio: '16:9',
-        }),
-      });
-
-      console.log('Response status:', response.status);
-      
-      if (!response.ok) {
-        let errorMessage = 'Failed to generate image';
-        try {
-          const errorData = await response.json();
-          console.error('API error:', JSON.stringify(errorData, null, 2));
-          
-          if (errorData.error) {
-            const errorStr = typeof errorData.error === 'string' ? errorData.error : JSON.stringify(errorData.error);
-            
-            if (errorStr.includes('BLOCK') || errorStr.toLowerCase().includes('blocked') || errorStr.toLowerCase().includes('safety')) {
-              errorMessage = 'Content was blocked by safety filters. Please try:\n• Using more neutral, descriptive language\n• Avoiding face swaps or identity-related edits\n• Making simpler edits (lighting, background, style changes)';
-            } else if (errorStr.includes('RECITATION')) {
-              errorMessage = 'Request blocked: The prompt may reference copyrighted content. Try describing the edit in your own words.';
-            } else {
-              errorMessage = `Error: ${errorStr}`;
-            }
-          } else if (response.status === 422) {
-            errorMessage = 'Invalid request. Please check your images and prompt.';
-          } else if (response.status === 429) {
-            errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
-          } else if (response.status >= 500) {
-            errorMessage = 'Server error. Please try again in a moment.';
-          }
-        } catch (e) {
-          console.error('Error parsing error response:', e);
+      const result = await runEditRequest(trimmedPrompt);
+      handleSuccess(result);
+    } catch (initialError) {
+      const initialMessage = initialError instanceof Error ? initialError.message : 'Failed to generate image';
+      console.log(logTag, 'Initial edit attempt failed', initialMessage);
+      const normalized = initialMessage.toLowerCase();
+      const blocked = normalized.includes('blocked') || normalized.includes('safety') || normalized.includes('unable to fulfill');
+      if (blocked) {
+        setAutoRetrying(true);
+        const sanitized = await sanitizePrompt(trimmedPrompt);
+        setAutoRetrying(false);
+        if (sanitized && sanitized !== trimmedPrompt) {
           try {
-            const errorText = await response.text();
-            console.error('Error text:', errorText);
-            if (errorText.toLowerCase().includes('blocked') || errorText.toLowerCase().includes('safety')) {
-              errorMessage = 'Content was blocked by safety filters. Please try more neutral, descriptive language and avoid potentially sensitive edits.';
-            } else {
-              errorMessage = `Request failed with status ${response.status}. Please try again.`;
-            }
-          } catch {
-            errorMessage = `Request failed with status ${response.status}. Please try again.`;
+            const retryResult = await runEditRequest(sanitized);
+            handleSuccess(retryResult, `Auto-adjusted prompt: ${sanitized}`);
+            return;
+          } catch (retryError) {
+            const retryMessage = retryError instanceof Error ? retryError.message : 'Failed to generate image';
+            console.log(logTag, 'Sanitized retry failed', retryMessage);
+            setError(retryMessage);
+            triggerFailureHaptics();
+            return;
           }
         }
-        throw new Error(errorMessage);
       }
-
-      const data = await response.json();
-      console.log('Edit response payload keys:', Object.keys(data ?? {}));
-
-      if (!data || !data.image || !data.image.base64Data || !data.image.mimeType) {
-        console.warn('No edited image returned from API', data);
-        let errorMessage = 'No edited image was returned. Try simplifying the prompt or avoiding sensitive edits.';
-
-        const apiError = typeof data?.error === 'string' ? data.error : undefined;
-        const apiText = typeof data?.text === 'string' ? data.text : undefined;
-        const combinedMessage = `${apiError ?? ''} ${apiText ?? ''}`.trim().toLowerCase();
-
-        if (combinedMessage.length > 0) {
-          if (combinedMessage.includes('unable to fulfill') || combinedMessage.includes('cannot generate')) {
-            errorMessage = 'The edit request was declined. Try adjusting the prompt to avoid sensitive or restricted content.';
-          } else if (combinedMessage.includes('blocked')) {
-            errorMessage = 'Content was blocked by safety filters. Use neutral, descriptive language and avoid sensitive transformations.';
-          }
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      const base64Image = `data:${data.image.mimeType};base64,${data.image.base64Data}`;
-      
-      setEditHistory((prev) => [
-        ...prev,
-        {
-          image: base64Image,
-          prompt: prompt.trim(),
-          timestamp: Date.now(),
-        },
-      ]);
-      setEditedImage(base64Image);
-      setPrompt('');
-    } catch (error) {
-      console.error('Error generating image:', error);
-      setError(error instanceof Error ? error.message : 'Failed to generate image');
+      setError(initialMessage);
+      triggerFailureHaptics();
     } finally {
       setIsGenerating(false);
     }
-  };
+  }, [handleSuccess, images.length, prompt, runEditRequest, sanitizePrompt, triggerFailureHaptics]);
 
-  const viewFullScreen = () => {
-    if (editedImage) {
-      router.push(`/preview?image=${encodeURIComponent(editedImage)}`);
+  const canGenerate = useMemo(() => {
+    if (activeTab === 'single') {
+      return images.length > 0 && prompt.trim().length > 0;
     }
-  };
-
-  const continueEditing = (historyImage: string) => {
-    clearImages();
-    const base64Data = historyImage.split(',')[1];
-    addImage({ uri: historyImage, base64: base64Data });
-    setEditedImage(historyImage);
-  };
-
-  const undoLastEdit = () => {
-    if (editHistory.length > 1) {
-      const newHistory = [...editHistory];
-      newHistory.pop();
-      setEditHistory(newHistory);
-      setEditedImage(newHistory[newHistory.length - 1].image);
-    } else if (editHistory.length === 1) {
-      setEditHistory([]);
-      setEditedImage(null);
-    }
-  };
-
-  const downloadImage = async (imageUri: string) => {
-    if (Platform.OS === 'web') {
-      const link = document.createElement('a');
-      link.href = imageUri;
-      link.download = `shadowframe-${Date.now()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      return;
-    }
-
-    if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) {
-        Alert.alert(
-          'Permission Required',
-          'Please grant permission to save images to your gallery'
-        );
-        return;
-      }
-    }
-
-    setIsDownloading(true);
-    try {
-      const filename = `shadowframe-${Date.now()}.png`;
-      const file = new File(Paths.cache, filename);
-
-      const base64Data = imageUri.split(',')[1];
-      const byteCharacters = atob(base64Data);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      
-      file.create();
-      file.write(byteArray);
-
-      const asset = await MediaLibrary.createAssetAsync(file.uri);
-      await MediaLibrary.createAlbumAsync('ShadowFrame', asset, false);
-
-      Alert.alert('Success', 'Image saved to gallery!');
-    } catch (error) {
-      console.error('Error saving image:', error);
-      Alert.alert('Error', 'Failed to save image');
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
-  const canGenerate = activeTab === 'single' 
-    ? images.length > 0 && prompt.trim().length > 0
-    : images.length === 2 && prompt.trim().length > 0;
+    return images.length === 2 && prompt.trim().length > 0;
+  }, [activeTab, images.length, prompt]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']} testID="editor-screen">
       <View style={styles.header}>
         <View style={styles.logoContainer}>
           <View style={styles.logoIcon}>
@@ -263,22 +382,20 @@ export default function EditorScreen() {
 
       <View style={styles.tabContainer}>
         <TouchableOpacity
+          testID="tab-single"
           style={[styles.tab, activeTab === 'single' && styles.tabActive]}
           onPress={() => setActiveTab('single')}
         >
           <ImagePlus size={20} color={activeTab === 'single' ? Colors.text : Colors.textSecondary} />
-          <Text style={[styles.tabText, activeTab === 'single' && styles.tabTextActive]}>
-            Single Edit
-          </Text>
+          <Text style={[styles.tabText, activeTab === 'single' && styles.tabTextActive]}>Single Edit</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          testID="tab-merge"
           style={[styles.tab, activeTab === 'merge' && styles.tabActive]}
           onPress={() => setActiveTab('merge')}
         >
           <Merge size={20} color={activeTab === 'merge' ? Colors.text : Colors.textSecondary} />
-          <Text style={[styles.tabText, activeTab === 'merge' && styles.tabTextActive]}>
-            Merge Photos
-          </Text>
+          <Text style={[styles.tabText, activeTab === 'merge' && styles.tabTextActive]}>Merge Photos</Text>
         </TouchableOpacity>
       </View>
 
@@ -288,20 +405,17 @@ export default function EditorScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>
-            {activeTab === 'single' ? 'Reference Image' : 'Two Photos to Merge'}
-          </Text>
+          <Text style={styles.sectionTitle}>{activeTab === 'single' ? 'Reference Image' : 'Two Photos to Merge'}</Text>
           <Text style={styles.sectionSubtitle}>
-            {activeTab === 'single'
-              ? 'Add an image to edit with AI'
-              : 'Add exactly 2 photos to merge together'}
+            {activeTab === 'single' ? 'Add an image to edit with AI' : 'Add exactly two photos to merge together'}
           </Text>
 
           <View style={styles.imageGrid}>
             {images.map((img, index) => (
-              <View key={index} style={styles.imageCard}>
-                <Image source={{ uri: img.uri }} style={styles.imagePreview} />
+              <View key={`${img.uri}-${index}`} style={styles.imageCard} testID={`selected-image-${index}`}>
+                <Image source={{ uri: img.uri }} style={styles.imagePreview} contentFit="cover" />
                 <TouchableOpacity
+                  testID={`remove-image-${index}`}
                   style={styles.removeButton}
                   onPress={() => removeImage(index)}
                 >
@@ -312,12 +426,12 @@ export default function EditorScreen() {
 
             {(activeTab === 'single' || (activeTab === 'merge' && images.length < 2)) && (
               <>
-                <TouchableOpacity style={styles.addImageButton} onPress={pickImage}>
+                <TouchableOpacity testID="add-gallery" style={styles.addImageButton} onPress={pickImage}>
                   <ImagePlus size={32} color={Colors.purple} />
                   <Text style={styles.addImageText}>Gallery</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.addImageButton} onPress={takePhoto}>
+                <TouchableOpacity testID="add-camera" style={styles.addImageButton} onPress={takePhoto}>
                   <Camera size={32} color={Colors.blueLight} />
                   <Text style={styles.addImageText}>Camera</Text>
                 </TouchableOpacity>
@@ -326,9 +440,7 @@ export default function EditorScreen() {
           </View>
 
           {activeTab === 'merge' && images.length < 2 && (
-            <Text style={styles.mergeHint}>
-              Add {2 - images.length} more photo{2 - images.length === 1 ? '' : 's'}
-            </Text>
+            <Text style={styles.mergeHint}>Add {2 - images.length} more photo{2 - images.length === 1 ? '' : 's'}</Text>
           )}
         </View>
 
@@ -341,11 +453,12 @@ export default function EditorScreen() {
           </Text>
 
           <TextInput
+            testID="prompt-input"
             style={styles.promptInput}
             placeholder={
               activeTab === 'single'
-                ? "e.g., 'Make it look cyberpunk' or 'Add dramatic lighting'"
-                : "e.g., 'Put the face from first photo onto the second photo'"
+                ? "e.g., 'Add neon cyberpunk lighting with moody shadows'"
+                : "e.g., 'Blend the face from the first image onto the second in a cinematic portrait style'"
             }
             placeholderTextColor={Colors.textTertiary}
             value={prompt}
@@ -355,20 +468,32 @@ export default function EditorScreen() {
             textAlignVertical="top"
           />
 
+          {infoBanner && (
+            <View style={styles.infoContainer} testID="info-banner">
+              <Text style={styles.infoText}>{infoBanner}</Text>
+            </View>
+          )}
+
+          {autoRetrying && (
+            <View style={styles.infoContainer} testID="auto-retrying">
+              <ActivityIndicator color={Colors.text} size="small" />
+              <Text style={styles.infoText}>Adjusting your prompt to bypass blocks…</Text>
+            </View>
+          )}
+
           {error && (
-            <View style={styles.errorContainer}>
+            <View style={styles.errorContainer} testID="error-banner">
               <AlertCircle size={20} color={Colors.error} />
               <Text style={styles.errorText}>{error}</Text>
             </View>
           )}
 
           <Pressable
-            style={[
-              styles.generateButton,
-              (!canGenerate || isGenerating) && styles.generateButtonDisabled,
-            ]}
+            testID="generate-button"
+            style={[styles.generateButton, (!canGenerate || isGenerating) && styles.generateButtonDisabled]}
             onPress={generateEdit}
             disabled={!canGenerate || isGenerating}
+            accessibilityRole="button"
           >
             {isGenerating ? (
               <ActivityIndicator color={Colors.text} />
@@ -387,43 +512,42 @@ export default function EditorScreen() {
               <Text style={styles.sectionTitle}>Result</Text>
               <View style={styles.resultActions}>
                 {editHistory.length > 0 && (
-                  <TouchableOpacity style={styles.iconButton} onPress={undoLastEdit}>
+                  <TouchableOpacity testID="undo-edit" style={styles.iconButton} onPress={undoLastEdit}>
                     <Undo2 size={20} color={Colors.textSecondary} />
                   </TouchableOpacity>
                 )}
               </View>
             </View>
-            
+
             <TouchableOpacity
+              testID="result-preview"
               style={styles.resultCard}
-              onPress={viewFullScreen}
+              onPress={() => viewFullScreen(editedImage)}
               activeOpacity={0.9}
             >
-              <Image
-                source={{ uri: editedImage }}
-                style={styles.resultImage}
-                contentFit="cover"
-              />
+              <Image source={{ uri: editedImage }} style={styles.resultImage} contentFit="cover" />
               <View style={styles.resultOverlay}>
-                <Text style={styles.resultOverlayText}>
-                  Tap to view full screen
-                </Text>
+                <Text style={styles.resultOverlayText}>Tap to view full screen</Text>
               </View>
             </TouchableOpacity>
 
             <View style={styles.resultButtonsRow}>
               <Pressable
+                testID="continue-editing"
                 style={styles.continueButton}
                 onPress={() => continueEditing(editedImage)}
+                accessibilityRole="button"
               >
                 <Sparkles size={18} color={Colors.text} />
                 <Text style={styles.continueButtonText}>Continue Editing</Text>
               </Pressable>
 
               <Pressable
+                testID="download-result"
                 style={[styles.downloadButton, isDownloading && styles.downloadButtonDisabled]}
                 onPress={() => downloadImage(editedImage)}
                 disabled={isDownloading}
+                accessibilityRole="button"
               >
                 {isDownloading ? (
                   <ActivityIndicator size="small" color={Colors.text} />
@@ -441,36 +565,32 @@ export default function EditorScreen() {
         {editHistory.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Edit History</Text>
-            <Text style={styles.sectionSubtitle}>
-              {editHistory.length} edit{editHistory.length === 1 ? '' : 's'}
-            </Text>
+            <Text style={styles.sectionSubtitle}>{editHistory.length} edit{editHistory.length === 1 ? '' : 's'}</Text>
             <View style={styles.historyContainer}>
               <ScrollView
+                testID="history-scroll"
                 horizontal
-                showsHorizontalScrollIndicator={true}
+                showsHorizontalScrollIndicator
                 contentContainerStyle={styles.historyScroll}
                 style={styles.historyScrollView}
                 indicatorStyle="white"
               >
-              {editHistory.map((item, index) => (
-                <TouchableOpacity
-                  key={item.timestamp}
-                  style={styles.historyCard}
-                  onPress={() => continueEditing(item.image)}
-                >
-                  <Image
-                    source={{ uri: item.image }}
-                    style={styles.historyImage}
-                    contentFit="cover"
-                  />
-                  <View style={styles.historyInfo}>
-                    <Text style={styles.historyNumber}>Edit #{index + 1}</Text>
-                    <Text style={styles.historyPrompt} numberOfLines={2}>
-                      {item.prompt}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
+                {editHistory.map((item, index) => (
+                  <TouchableOpacity
+                    key={item.timestamp}
+                    testID={`history-card-${index}`}
+                    style={styles.historyCard}
+                    onPress={() => continueEditing(item.image)}
+                  >
+                    <Image source={{ uri: item.image }} style={styles.historyImage} contentFit="cover" />
+                    <View style={styles.historyInfo}>
+                      <Text style={styles.historyNumber}>Edit #{index + 1}</Text>
+                      <Text style={styles.historyPrompt} numberOfLines={2}>
+                        {item.prompt}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
               </ScrollView>
               <View style={styles.scrollBarTrack}>
                 <View style={styles.scrollBarThumb} />
@@ -479,10 +599,15 @@ export default function EditorScreen() {
           </View>
         )}
 
-        <View style={{ height: 40 }} />
+        <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function viewFullScreen(imageUri: string) {
+  console.log(logTag, 'Opening full screen preview');
+  router.push(`/preview?image=${encodeURIComponent(imageUri)}`);
 }
 
 const styles = StyleSheet.create({
@@ -583,6 +708,12 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
     color: Colors.textSecondary,
   },
+  mergeHint: {
+    marginTop: 12,
+    fontSize: 14,
+    color: Colors.blueLight,
+    fontWeight: '600' as const,
+  },
   promptInput: {
     backgroundColor: Colors.surface,
     borderRadius: 16,
@@ -592,6 +723,39 @@ const styles = StyleSheet.create({
     minHeight: 120,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  infoContainer: {
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: Colors.surfaceLight,
+    borderWidth: 1,
+    borderColor: Colors.purple,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  infoText: {
+    flex: 1,
+    color: Colors.accent,
+    fontSize: 14,
+    fontWeight: '600' as const,
+  },
+  errorContainer: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.error,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.error,
   },
   generateButton: {
     marginTop: 16,
@@ -610,6 +774,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700' as const,
     color: Colors.text,
+  },
+  resultHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  resultActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  iconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   resultCard: {
     borderRadius: 16,
@@ -635,81 +819,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600' as const,
     color: Colors.text,
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  tabActive: {
-    backgroundColor: Colors.purple,
-    borderColor: Colors.purple,
-  },
-  tabText: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-    color: Colors.textSecondary,
-  },
-  tabTextActive: {
-    color: Colors.text,
-  },
-  mergeHint: {
-    marginTop: 12,
-    fontSize: 14,
-    color: Colors.blueLight,
-    fontWeight: '600' as const,
-  },
-  errorContainer: {
-    marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 12,
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.error,
-  },
-  errorText: {
-    flex: 1,
-    fontSize: 14,
-    color: Colors.error,
-  },
-  resultHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  resultActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  iconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
   resultButtonsRow: {
     flexDirection: 'row',
@@ -799,5 +908,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textSecondary,
     lineHeight: 16,
+  },
+  bottomSpacer: {
+    height: 40,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  tabActive: {
+    backgroundColor: Colors.purple,
+    borderColor: Colors.purple,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+  },
+  tabTextActive: {
+    color: Colors.text,
   },
 });

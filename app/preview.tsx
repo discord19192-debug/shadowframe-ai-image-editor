@@ -1,9 +1,9 @@
 import { Image } from 'expo-image';
-import { File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Download, Info } from 'lucide-react-native';
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,91 +14,119 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Colors from '@/constants/colors';
 
+const logTag = '[ShadowFrame Preview]' as const;
+
+function resolveWritableDirectory(): string | null {
+  const fileSystem = FileSystem as unknown as {
+    cacheDirectory?: string | null;
+    documentDirectory?: string | null;
+  };
+  return fileSystem.cacheDirectory ?? fileSystem.documentDirectory ?? null;
+}
+
 export default function PreviewScreen() {
   const params = useLocalSearchParams<{ image: string }>();
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [permission, requestPermission] = MediaLibrary.usePermissions();
+  const insets = useSafeAreaInsets();
 
-  const downloadImage = async () => {
-    if (!params.image) return;
+  const hasImage = useMemo(() => typeof params.image === 'string' && params.image.length > 0, [params.image]);
+  const topPadding = useMemo(() => Math.max(insets.top + 20, 32), [insets.top]);
+  const bottomPadding = useMemo(() => Math.max(insets.bottom + 24, 32), [insets.bottom]);
 
-    if (Platform.OS === 'web') {
-      const link = document.createElement('a');
-      link.href = params.image;
-      link.download = `shadowframe-${Date.now()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+  const handleBack = useCallback(() => {
+    console.log(logTag, 'Returning to editor');
+    router.back();
+  }, []);
+
+  const downloadImage = useCallback(async () => {
+    if (!hasImage || typeof params.image !== 'string') {
+      console.log(logTag, 'No image available for download');
       return;
     }
-
+    console.log(logTag, 'Initiating download');
+    if (Platform.OS === 'web') {
+      if (typeof document !== 'undefined') {
+        const link = document.createElement('a');
+        link.href = params.image;
+        link.download = `shadowframe-${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        console.log(logTag, 'Document not available for web download');
+      }
+      return;
+    }
     if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) {
-        Alert.alert(
-          'Permission Required',
-          'Please grant permission to save images to your gallery'
-        );
+      const permissionResult = await requestPermission();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission required', 'Allow gallery access to save your image.');
         return;
       }
     }
-
     setIsDownloading(true);
     try {
-      const filename = `shadowframe-${Date.now()}.png`;
-      const file = new File(Paths.cache, filename);
-
-      const base64Data = params.image.split(',')[1];
-      const byteCharacters = atob(base64Data);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      const directory = resolveWritableDirectory();
+      if (!directory) {
+        throw new Error('No writable directory available.');
       }
-      const byteArray = new Uint8Array(byteNumbers);
-      
-      file.create();
-      file.write(byteArray);
-
-      const asset = await MediaLibrary.createAssetAsync(file.uri);
+      const filename = `shadowframe-${Date.now()}.png`;
+      const fileUri = `${directory}${filename}`;
+      const base64Data = params.image.split(',')[1];
+      await FileSystem.writeAsStringAsync(fileUri, base64Data, { encoding: 'base64' });
+      const asset = await MediaLibrary.createAssetAsync(fileUri);
       await MediaLibrary.createAlbumAsync('ShadowFrame', asset, false);
-
-      Alert.alert('Success', 'Image saved to gallery!');
+      Alert.alert('Saved', 'Image added to your gallery.');
     } catch (error) {
-      console.error('Error saving image:', error);
-      Alert.alert('Error', 'Failed to save image');
+      console.log(logTag, 'Failed to save image', error);
+      Alert.alert('Error', 'Could not save the image.');
     } finally {
       setIsDownloading(false);
     }
-  };
+  }, [hasImage, params.image, permission?.granted, requestPermission]);
+
+  if (!hasImage) {
+    return (
+      <View style={styles.emptyState} testID="preview-empty">
+        <Text style={styles.emptyTitle}>No image selected</Text>
+        <Text style={styles.emptySubtitle}>Return to the editor to generate an image first.</Text>
+        <Pressable style={styles.emptyButton} onPress={handleBack} accessibilityRole="button">
+          <Text style={styles.emptyButtonText}>Back to editor</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']} testID="preview-screen">
       <Image source={{ uri: params.image }} style={styles.image} contentFit="contain" />
 
-      <View style={styles.overlay}>
-        <View style={styles.topBar}>
-          <TouchableOpacity style={styles.button} onPress={() => router.back()}>
+      <View style={styles.overlay} pointerEvents="box-none">
+        <View style={[styles.topBar, { paddingTop: topPadding }]} pointerEvents="box-none">
+          <TouchableOpacity testID="preview-back" style={styles.button} onPress={handleBack}>
             <ArrowLeft size={24} color={Colors.text} />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.bottomBar}>
-          <View style={styles.photopeaHint}>
+        <View style={[styles.bottomBar, { paddingBottom: bottomPadding }]} pointerEvents="box-none">
+          <View style={styles.photopeaHint} testID="photopea-hint">
             <Info size={14} color={Colors.textTertiary} />
             <Text style={styles.photopeaText}>
-              Use{' '}
-              <Text style={styles.photopeaLink}>photopea.com</Text>
-              {' '}to remove the Rork logo from photos
+              Use <Text style={styles.photopeaLink}>photopea.com</Text> to remove the Rork logo from photos
             </Text>
           </View>
 
           <Pressable
+            testID="preview-download"
             style={[styles.downloadButton, isDownloading && styles.downloadButtonDisabled]}
             onPress={downloadImage}
             disabled={isDownloading}
+            accessibilityRole="button"
           >
             {isDownloading ? (
               <ActivityIndicator color={Colors.text} />
@@ -111,7 +139,7 @@ export default function PreviewScreen() {
           </Pressable>
         </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -127,10 +155,9 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'transparent',
+    justifyContent: 'space-between',
   },
   topBar: {
-    paddingTop: 60,
     paddingHorizontal: 20,
   },
   button: {
@@ -142,11 +169,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingBottom: 40,
     paddingHorizontal: 20,
     gap: 12,
   },
@@ -166,7 +188,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.text,
     lineHeight: 20,
-    fontWeight: '500' as const,
+    fontWeight: '600' as const,
   },
   photopeaLink: {
     color: Colors.accent,
@@ -186,6 +208,37 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   downloadButtonText: {
+    fontSize: 16,
+    fontWeight: '700' as const,
+    color: Colors.text,
+  },
+  emptyState: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    gap: 16,
+  },
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: '700' as const,
+    color: Colors.text,
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  emptyButton: {
+    marginTop: 8,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: Colors.purple,
+  },
+  emptyButtonText: {
     fontSize: 16,
     fontWeight: '700' as const,
     color: Colors.text,
