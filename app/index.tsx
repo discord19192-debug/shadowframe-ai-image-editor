@@ -78,9 +78,13 @@ export default function EditorScreen() {
         image: img.base64,
       }));
 
+      const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL;
+      const endpoint = baseUrl ? `${baseUrl}/api/images/edit` : '/api/images/edit';
+
       console.log('Sending edit request with', imageData.length, 'images');
       console.log('Using prompt:', promptForRequest);
-      const response = await fetch('https://toolkit.rork.com/images/edit/', {
+      console.log('Endpoint:', endpoint);
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -93,44 +97,33 @@ export default function EditorScreen() {
       });
 
       console.log('Response status:', response.status);
-      
+
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('API error payload:', errorText);
         let errorMessage = 'Failed to generate image. Please try again.';
 
-        try {
-          const rawError = await response.text();
-          console.error('API error:', rawError);
-
-          let parsed: unknown = null;
+        if (errorText) {
           try {
-            parsed = rawError ? JSON.parse(rawError) : null;
-          } catch (parseJsonError) {
-            console.error('Error parsing JSON error response:', parseJsonError);
-          }
-
-          if (parsed && typeof parsed === 'object' && 'error' in parsed) {
-            const errorValue = (parsed as { error?: unknown }).error;
-            if (typeof errorValue === 'string') {
-              const normalized = errorValue.toLowerCase();
-              if (normalized.includes('rate limit') || response.status === 429) {
-                errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
-              } else if (normalized.includes('timeout')) {
-                errorMessage = 'The request timed out. Please try again.';
-              } else {
-                errorMessage = 'Unable to process that request. Please try a different description.';
-              }
+            const parsed = JSON.parse(errorText) as { message?: unknown; error?: unknown };
+            const candidate = typeof parsed.message === 'string' ? parsed.message : typeof parsed.error === 'string' ? parsed.error : null;
+            if (candidate && candidate.length > 0) {
+              errorMessage = candidate;
             }
+          } catch (parseError) {
+            console.error('Error parsing JSON error response:', parseError);
+            errorMessage = errorText;
           }
+        }
 
-          if (response.status === 422) {
-            errorMessage = 'Invalid request. Please verify your images and instructions.';
-          } else if (response.status === 429) {
-            errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
-          } else if (response.status >= 500) {
-            errorMessage = 'Server error. Please try again in a moment.';
-          }
-        } catch (responseHandlingError) {
-          console.error('Error handling failed response:', responseHandlingError);
+        if (response.status === 429) {
+          errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
+        } else if (response.status === 422) {
+          errorMessage = 'Invalid request. Please verify your images and instructions.';
+        } else if (response.status === 503) {
+          errorMessage = 'Service temporarily unavailable. Please retry shortly.';
+        } else if (response.status === 504) {
+          errorMessage = 'The request timed out. Please try again.';
         }
 
         throw new Error(errorMessage);
