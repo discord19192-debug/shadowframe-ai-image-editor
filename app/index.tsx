@@ -23,6 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Colors from '@/constants/colors';
 import { useImages } from '@/contexts/ImagesContext';
+import { sanitizePrompt, SanitizedPromptResult } from '@/utils/prompt';
 
 interface EditHistoryItem {
   image: string;
@@ -34,6 +35,7 @@ export default function EditorScreen() {
   const { images, addImage, removeImage, clearImages } = useImages();
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [sanitizedDetails, setSanitizedDetails] = useState<SanitizedPromptResult | null>(null);
   const [editedImage, setEditedImage] = useState<string | null>(null);
   const [editHistory, setEditHistory] = useState<EditHistoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +71,10 @@ export default function EditorScreen() {
     setIsGenerating(true);
     setError(null);
 
+    const sanitized = sanitizePrompt(prompt.trim(), activeTab);
+    const sanitizedPromptUsed = sanitized.sanitizedPrompt;
+    setSanitizedDetails(sanitized.wasModified ? sanitized : null);
+
     try {
       const imageData = images.map((img) => ({
         type: 'image' as const,
@@ -76,13 +82,14 @@ export default function EditorScreen() {
       }));
 
       console.log('Sending edit request with', imageData.length, 'images');
+      console.log('Using prompt:', sanitized.sanitizedPrompt);
       const response = await fetch('https://toolkit.rork.com/images/edit/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: prompt.trim(),
+          prompt: sanitized.sanitizedPrompt,
           images: imageData,
           aspectRatio: '16:9',
         }),
@@ -138,12 +145,13 @@ export default function EditorScreen() {
         ...prev,
         {
           image: base64Image,
-          prompt: prompt.trim(),
+          prompt: sanitizedPromptUsed,
           timestamp: Date.now(),
         },
       ]);
       setEditedImage(base64Image);
       setPrompt('');
+      setSanitizedDetails(null);
     } catch (error) {
       console.error('Error generating image:', error);
       setError(error instanceof Error ? error.message : 'Failed to generate image');
@@ -335,15 +343,40 @@ export default function EditorScreen() {
             placeholder={
               activeTab === 'single'
                 ? "e.g., 'Make it look cyberpunk' or 'Add dramatic lighting'"
-                : "e.g., 'Put the face from first photo onto the second photo'"
+                : "e.g., 'Blend both portraits into a cinematic double exposure'"
             }
             placeholderTextColor={Colors.textTertiary}
             value={prompt}
-            onChangeText={setPrompt}
+            onChangeText={(value) => {
+              setPrompt(value);
+              if (sanitizedDetails) {
+                setSanitizedDetails(null);
+              }
+            }}
             multiline
             numberOfLines={4}
             textAlignVertical="top"
           />
+
+          {sanitizedDetails && (
+            <View style={styles.sanitizedInfo} testID="sanitized-prompt-notice">
+              <View style={styles.sanitizedInfoHeader}>
+                <Sparkles size={18} color={Colors.accent} />
+                <Text style={styles.sanitizedInfoTitle}>Prompt refined for safety</Text>
+              </View>
+              <Text style={styles.sanitizedInfoPrompt}>{sanitizedDetails.sanitizedPrompt}</Text>
+              {sanitizedDetails.warnings.length > 0 && (
+                <View style={styles.sanitizedInfoWarnings}>
+                  {sanitizedDetails.warnings.map((warning, index) => (
+                    <View key={`${warning}-${index}`} style={styles.sanitizedInfoBullet}>
+                      <View style={styles.sanitizedInfoDot} />
+                      <Text style={styles.sanitizedInfoWarning}>{warning}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
 
           {error && (
             <View style={styles.errorContainer}>
@@ -591,6 +624,51 @@ const styles = StyleSheet.create({
     minHeight: 120,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  sanitizedInfo: {
+    marginTop: 12,
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+  },
+  sanitizedInfoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sanitizedInfoTitle: {
+    fontSize: 14,
+    fontWeight: '700' as const,
+    color: Colors.accent,
+  },
+  sanitizedInfoPrompt: {
+    fontSize: 14,
+    color: Colors.text,
+    lineHeight: 20,
+  },
+  sanitizedInfoWarnings: {
+    gap: 8,
+  },
+  sanitizedInfoBullet: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  sanitizedInfoDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.purpleLight,
+    marginTop: 6,
+  },
+  sanitizedInfoWarning: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 16,
   },
   generateButton: {
     marginTop: 16,
