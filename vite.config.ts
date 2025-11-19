@@ -6,7 +6,10 @@ import path from 'path';
 export default defineConfig({
   plugins: [
     react({
-      include: /\.(jsx|js|tsx|ts)$/,
+      include: [
+        /\/node_modules\/expo-router\/build\/.*\.js$/,
+        /\.(jsx|js|tsx|ts)$/
+      ],
     }),
     viteStaticCopy({
       targets: [
