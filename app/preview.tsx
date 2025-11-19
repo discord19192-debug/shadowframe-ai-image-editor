@@ -207,7 +207,7 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
   },
   photopeaLink: {
-    color: Colors.accent,
+    color: Colors.purple,
     fontWeight: '700' as const,
     textDecorationLine: 'underline' as const,
   },
