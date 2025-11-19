@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
 import { File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
+import { useMediaLibraryPermissionsSafe } from '@/hooks/useMediaLibraryPermissions';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Download, Info } from 'lucide-react-native';
 import React, { useState } from 'react';
@@ -14,13 +15,15 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Colors from '@/constants/colors';
 
 export default function PreviewScreen() {
   const params = useLocalSearchParams<{ image: string }>();
+  const insets = useSafeAreaInsets();
   const [isDownloading, setIsDownloading] = useState(false);
-  const [permission, requestPermission] = MediaLibrary.usePermissions();
+  const [permission, requestPermission] = useMediaLibraryPermissionsSafe();
 
   const downloadImage = async () => {
     if (!params.image) return;
@@ -79,13 +82,17 @@ export default function PreviewScreen() {
       <Image source={{ uri: params.image }} style={styles.image} contentFit="contain" />
 
       <View style={styles.overlay}>
-        <View style={styles.topBar}>
-          <TouchableOpacity style={styles.button} onPress={() => router.back()}>
+        <View style={[styles.topBar, { paddingTop: insets.top + 16 }]}>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => router.back()}
+            testID="preview-back-button"
+          >
             <ArrowLeft size={24} color={Colors.text} />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.bottomBar}>
+        <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 24 }]}>
           <View style={styles.photopeaHint}>
             <Info size={14} color={Colors.textTertiary} />
             <Text style={styles.photopeaText}>
@@ -99,6 +106,7 @@ export default function PreviewScreen() {
             style={[styles.downloadButton, isDownloading && styles.downloadButtonDisabled]}
             onPress={downloadImage}
             disabled={isDownloading}
+            testID="preview-download-button"
           >
             {isDownloading ? (
               <ActivityIndicator color={Colors.text} />
@@ -130,7 +138,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   topBar: {
-    paddingTop: 60,
     paddingHorizontal: 20,
   },
   button: {
@@ -146,7 +153,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    paddingBottom: 40,
     paddingHorizontal: 20,
     gap: 12,
   },

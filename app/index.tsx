@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
+import { useMediaLibraryPermissionsSafe } from '@/hooks/useMediaLibraryPermissions';
 import { File, Paths } from 'expo-file-system';
 import { router } from 'expo-router';
 import { Camera, ImagePlus, Sparkles, X, Download, Undo2, AlertCircle, Merge } from 'lucide-react-native';
@@ -38,7 +39,7 @@ export default function EditorScreen() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'single' | 'merge'>('single');
   const [isDownloading, setIsDownloading] = useState(false);
-  const [permission, requestPermission] = MediaLibrary.usePermissions();
+  const [permission, requestPermission] = useMediaLibraryPermissionsSafe();
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -284,6 +285,7 @@ export default function EditorScreen() {
                 <TouchableOpacity
                   style={styles.removeButton}
                   onPress={() => removeImage(index)}
+                  testID={`remove-image-${index}`}
                 >
                   <X size={16} color={Colors.text} />
                 </TouchableOpacity>
@@ -292,12 +294,20 @@ export default function EditorScreen() {
 
             {(activeTab === 'single' || (activeTab === 'merge' && images.length < 2)) && (
               <>
-                <TouchableOpacity style={styles.addImageButton} onPress={pickImage}>
+                <TouchableOpacity
+                  style={styles.addImageButton}
+                  onPress={pickImage}
+                  testID="add-image-from-library-button"
+                >
                   <ImagePlus size={32} color={Colors.purple} />
                   <Text style={styles.addImageText}>Gallery</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.addImageButton} onPress={takePhoto}>
+                <TouchableOpacity
+                  style={styles.addImageButton}
+                  onPress={takePhoto}
+                  testID="open-camera-button"
+                >
                   <Camera size={32} color={Colors.blueLight} />
                   <Text style={styles.addImageText}>Camera</Text>
                 </TouchableOpacity>
@@ -349,6 +359,7 @@ export default function EditorScreen() {
             ]}
             onPress={generateEdit}
             disabled={!canGenerate || isGenerating}
+            testID="generate-edit-button"
           >
             {isGenerating ? (
               <ActivityIndicator color={Colors.text} />
@@ -367,7 +378,11 @@ export default function EditorScreen() {
               <Text style={styles.sectionTitle}>Result</Text>
               <View style={styles.resultActions}>
                 {editHistory.length > 0 && (
-                  <TouchableOpacity style={styles.iconButton} onPress={undoLastEdit}>
+                  <TouchableOpacity
+                    style={styles.iconButton}
+                    onPress={undoLastEdit}
+                    testID="undo-last-edit-button"
+                  >
                     <Undo2 size={20} color={Colors.textSecondary} />
                   </TouchableOpacity>
                 )}
@@ -378,6 +393,7 @@ export default function EditorScreen() {
               style={styles.resultCard}
               onPress={viewFullScreen}
               activeOpacity={0.9}
+              testID="view-fullscreen-result"
             >
               <Image
                 source={{ uri: editedImage }}
@@ -395,6 +411,7 @@ export default function EditorScreen() {
               <Pressable
                 style={styles.continueButton}
                 onPress={() => continueEditing(editedImage)}
+                testID="continue-edit-button"
               >
                 <Sparkles size={18} color={Colors.text} />
                 <Text style={styles.continueButtonText}>Continue Editing</Text>
@@ -404,6 +421,7 @@ export default function EditorScreen() {
                 style={[styles.downloadButton, isDownloading && styles.downloadButtonDisabled]}
                 onPress={() => downloadImage(editedImage)}
                 disabled={isDownloading}
+                testID="download-edited-image-button"
               >
                 {isDownloading ? (
                   <ActivityIndicator size="small" color={Colors.text} />
@@ -437,6 +455,7 @@ export default function EditorScreen() {
                   key={item.timestamp}
                   style={styles.historyCard}
                   onPress={() => continueEditing(item.image)}
+                  testID={`history-card-${index}`}
                 >
                   <Image
                     source={{ uri: item.image }}
