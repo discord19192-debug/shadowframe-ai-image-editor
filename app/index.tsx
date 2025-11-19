@@ -216,6 +216,11 @@ export default function EditorScreen() {
   );
 
   const pickImage = useCallback(async () => {
+    if (activeTab === 'merge' && images.length >= 2) {
+      console.log(logTag, 'Maximum images reached for merge mode');
+      Alert.alert('Maximum Reached', 'You can only merge 2 photos at a time. Remove one to add another.');
+      return;
+    }
     console.log(logTag, 'Opening image picker');
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -227,12 +232,17 @@ export default function EditorScreen() {
       addImage({ uri: result.assets[0].uri, base64: result.assets[0].base64 });
       console.log(logTag, 'Added image from library');
     }
-  }, [addImage]);
+  }, [addImage, activeTab, images.length]);
 
   const takePhoto = useCallback(() => {
+    if (activeTab === 'merge' && images.length >= 2) {
+      console.log(logTag, 'Maximum images reached for merge mode');
+      Alert.alert('Maximum Reached', 'You can only merge 2 photos at a time. Remove one to add another.');
+      return;
+    }
     console.log(logTag, 'Navigating to camera screen');
     router.push('/camera');
-  }, []);
+  }, [activeTab, images.length]);
 
   const continueEditing = useCallback(
     (historyImage: string) => {
@@ -389,15 +399,19 @@ export default function EditorScreen() {
               </View>
             ))}
 
-            <TouchableOpacity testID="add-gallery" style={styles.addImageButton} onPress={pickImage}>
-              <ImagePlus size={32} color={Colors.purple} />
-              <Text style={styles.addImageText}>Gallery</Text>
-            </TouchableOpacity>
+            {!(activeTab === 'merge' && images.length >= 2) && (
+              <>
+                <TouchableOpacity testID="add-gallery" style={styles.addImageButton} onPress={pickImage}>
+                  <ImagePlus size={32} color={Colors.purple} />
+                  <Text style={styles.addImageText}>Gallery</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity testID="add-camera" style={styles.addImageButton} onPress={takePhoto}>
-              <Camera size={32} color={Colors.blueLight} />
-              <Text style={styles.addImageText}>Camera</Text>
-            </TouchableOpacity>
+                <TouchableOpacity testID="add-camera" style={styles.addImageButton} onPress={takePhoto}>
+                  <Camera size={32} color={Colors.blueLight} />
+                  <Text style={styles.addImageText}>Camera</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
 
           {activeTab === 'merge' && images.length < 2 && (
