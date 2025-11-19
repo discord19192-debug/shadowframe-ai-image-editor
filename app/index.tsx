@@ -155,7 +155,11 @@ export default function EditorScreen() {
         });
       } catch (networkError) {
         console.log(logTag, 'Network error when calling edit endpoint', networkError);
-        throw new Error('Could not reach the edit service. Check your connection and try again.');
+        const errorMessage = networkError instanceof Error ? networkError.message : 'Unknown network error';
+        if (errorMessage.includes('NetworkError') || errorMessage.includes('Failed to fetch')) {
+          throw new Error('Network connection failed. Please check your internet connection and try again.');
+        }
+        throw new Error(`Could not connect to the server: ${errorMessage}`);
       }
       console.log(logTag, 'Edit response status', response.status);
       if (!response.ok) {
@@ -327,7 +331,7 @@ export default function EditorScreen() {
     if (activeTab === 'single') {
       return images.length > 0 && prompt.trim().length > 0;
     }
-    return images.length === 2 && prompt.trim().length > 0;
+    return images.length >= 2 && prompt.trim().length > 0;
   }, [activeTab, images.length, prompt]);
 
   return (
@@ -385,23 +389,19 @@ export default function EditorScreen() {
               </View>
             ))}
 
-            {(activeTab === 'single' || (activeTab === 'merge' && images.length < 2)) && (
-              <>
-                <TouchableOpacity testID="add-gallery" style={styles.addImageButton} onPress={pickImage}>
-                  <ImagePlus size={32} color={Colors.purple} />
-                  <Text style={styles.addImageText}>Gallery</Text>
-                </TouchableOpacity>
+            <TouchableOpacity testID="add-gallery" style={styles.addImageButton} onPress={pickImage}>
+              <ImagePlus size={32} color={Colors.purple} />
+              <Text style={styles.addImageText}>Gallery</Text>
+            </TouchableOpacity>
 
-                <TouchableOpacity testID="add-camera" style={styles.addImageButton} onPress={takePhoto}>
-                  <Camera size={32} color={Colors.blueLight} />
-                  <Text style={styles.addImageText}>Camera</Text>
-                </TouchableOpacity>
-              </>
-            )}
+            <TouchableOpacity testID="add-camera" style={styles.addImageButton} onPress={takePhoto}>
+              <Camera size={32} color={Colors.blueLight} />
+              <Text style={styles.addImageText}>Camera</Text>
+            </TouchableOpacity>
           </View>
 
           {activeTab === 'merge' && images.length < 2 && (
-            <Text style={styles.mergeHint}>Add {2 - images.length} more photo{2 - images.length === 1 ? '' : 's'}</Text>
+            <Text style={styles.mergeHint}>Add at least {2 - images.length} more photo{2 - images.length === 1 ? '' : 's'}</Text>
           )}
         </View>
 
