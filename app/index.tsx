@@ -15,7 +15,7 @@ import {
   Undo2,
   X,
 } from 'lucide-react-native';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -64,6 +64,8 @@ export default function EditorScreen() {
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [permission, requestPermission] = MediaLibrary.usePermissions();
+  const [scrollProgress, setScrollProgress] = useState<number>(0);
+  const historyScrollRef = useRef<ScrollView>(null);
 
   const triggerSuccessHaptics = useCallback(() => {
     if (Platform.OS !== 'web') {
@@ -346,6 +348,29 @@ export default function EditorScreen() {
     return images.length >= 2 && prompt.trim().length > 0;
   }, [activeTab, images.length, prompt]);
 
+  const handleHistoryScroll = useCallback(
+    (event: { nativeEvent: { contentOffset: { x: number }; contentSize: { width: number }; layoutMeasurement: { width: number } } }) => {
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const maxScrollDistance = contentSize.width - layoutMeasurement.width;
+      if (maxScrollDistance > 0) {
+        const progress = contentOffset.x / maxScrollDistance;
+        setScrollProgress(Math.max(0, Math.min(1, progress)));
+      } else {
+        setScrollProgress(0);
+      }
+    },
+    [],
+  );
+
+  const scrollBarThumbStyle = useMemo(() => {
+    const trackWidth = 100;
+    const thumbWidth = 40;
+    const maxOffset = trackWidth - thumbWidth;
+    return {
+      transform: [{ translateX: scrollProgress * maxOffset }],
+    };
+  }, [scrollProgress]);
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']} testID="editor-screen">
       <View style={styles.header}>
@@ -560,12 +585,14 @@ export default function EditorScreen() {
             <Text style={styles.sectionSubtitle}>{editHistory.length} edit{editHistory.length === 1 ? '' : 's'}</Text>
             <View style={styles.historyContainer}>
               <ScrollView
+                ref={historyScrollRef}
                 testID="history-scroll"
                 horizontal
-                showsHorizontalScrollIndicator
+                showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.historyScroll}
                 style={styles.historyScrollView}
-                indicatorStyle="white"
+                onScroll={handleHistoryScroll}
+                scrollEventThrottle={16}
               >
                 {editHistory.map((item, index) => (
                   <TouchableOpacity
@@ -585,7 +612,7 @@ export default function EditorScreen() {
                 ))}
               </ScrollView>
               <View style={styles.scrollBarTrack}>
-                <View style={styles.scrollBarThumb} />
+                <View style={[styles.scrollBarThumb, scrollBarThumbStyle]} />
               </View>
             </View>
           </View>
