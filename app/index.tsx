@@ -1,4 +1,4 @@
-import { generateText } from '@rork-ai/toolkit-sdk';
+
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -56,11 +56,9 @@ export default function EditorScreen() {
   const { images, addImage, removeImage, clearImages } = useImages();
   const [prompt, setPrompt] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const [autoRetrying, setAutoRetrying] = useState<boolean>(false);
   const [editedImage, setEditedImage] = useState<string | null>(null);
   const [editHistory, setEditHistory] = useState<EditHistoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [infoBanner, setInfoBanner] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('single');
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [permission, requestPermission] = MediaLibrary.usePermissions();
@@ -192,22 +190,10 @@ export default function EditorScreen() {
     [activeTab, buildImagePayload, parseErrorResponse],
   );
 
-  const sanitizePrompt = useCallback(async (rawPrompt: string) => {
-    try {
-      console.log(logTag, 'Sanitizing prompt');
-      const sanitized = await generateText(
-        `Rewrite the following photo editing request so that it is safe, neutral, and compliant with professional guidelines. Keep the creative intent but remove explicit, unsafe, or impersonation language. Return only the rewritten prompt.\n\n${rawPrompt}`,
-      );
-      const trimmed = sanitized.trim();
-      return trimmed.length > 0 ? trimmed : null;
-    } catch (sanitizeError) {
-      console.log(logTag, 'Failed to sanitize prompt', sanitizeError);
-      return null;
-    }
-  }, []);
+
 
   const handleSuccess = useCallback(
-    ({ imageUri, promptUsed }: { imageUri: string; promptUsed: string }, banner?: string) => {
+    ({ imageUri, promptUsed }: { imageUri: string; promptUsed: string }) => {
       console.log(logTag, 'Handling successful edit result');
       setEditHistory((prev) => [
         ...prev,
@@ -220,8 +206,6 @@ export default function EditorScreen() {
       setEditedImage(imageUri);
       setPrompt('');
       setError(null);
-      setInfoBanner(banner ?? null);
-      setAutoRetrying(false);
       triggerSuccessHaptics();
     },
     [triggerSuccessHaptics],
@@ -253,7 +237,6 @@ export default function EditorScreen() {
       const base64Data = historyImage.split(',')[1];
       addImage({ uri: historyImage, base64: base64Data });
       setEditedImage(historyImage);
-      setInfoBanner(null);
     },
     [addImage, clearImages],
   );
@@ -325,9 +308,7 @@ export default function EditorScreen() {
     }
     Keyboard.dismiss();
     setIsGenerating(true);
-    setAutoRetrying(false);
     setError(null);
-    setInfoBanner(null);
     const trimmedPrompt = prompt.trim();
     try {
       const result = await runEditRequest(trimmedPrompt);
@@ -335,32 +316,12 @@ export default function EditorScreen() {
     } catch (initialError) {
       const initialMessage = initialError instanceof Error ? initialError.message : 'Failed to generate image';
       console.log(logTag, 'Initial edit attempt failed', initialMessage);
-      const normalized = initialMessage.toLowerCase();
-      const blocked = normalized.includes('blocked') || normalized.includes('safety') || normalized.includes('unable to fulfill');
-      if (blocked) {
-        setAutoRetrying(true);
-        const sanitized = await sanitizePrompt(trimmedPrompt);
-        setAutoRetrying(false);
-        if (sanitized && sanitized !== trimmedPrompt) {
-          try {
-            const retryResult = await runEditRequest(sanitized);
-            handleSuccess(retryResult, `Auto-adjusted prompt: ${sanitized}`);
-            return;
-          } catch (retryError) {
-            const retryMessage = retryError instanceof Error ? retryError.message : 'Failed to generate image';
-            console.log(logTag, 'Sanitized retry failed', retryMessage);
-            setError(retryMessage);
-            triggerFailureHaptics();
-            return;
-          }
-        }
-      }
       setError(initialMessage);
       triggerFailureHaptics();
     } finally {
       setIsGenerating(false);
     }
-  }, [handleSuccess, images.length, prompt, runEditRequest, sanitizePrompt, triggerFailureHaptics]);
+  }, [handleSuccess, images.length, prompt, runEditRequest, triggerFailureHaptics]);
 
   const canGenerate = useMemo(() => {
     if (activeTab === 'single') {
@@ -468,18 +429,7 @@ export default function EditorScreen() {
             textAlignVertical="top"
           />
 
-          {infoBanner && (
-            <View style={styles.infoContainer} testID="info-banner">
-              <Text style={styles.infoText}>{infoBanner}</Text>
-            </View>
-          )}
 
-          {autoRetrying && (
-            <View style={styles.infoContainer} testID="auto-retrying">
-              <ActivityIndicator color={Colors.text} size="small" />
-              <Text style={styles.infoText}>Adjusting your prompt to bypass blocks…</Text>
-            </View>
-          )}
 
           {error && (
             <View style={styles.errorContainer} testID="error-banner">
