@@ -26,10 +26,14 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    commonjsOptions: {
+      transformMixedEsModules: true,
+    },
   },
   optimizeDeps: {
     esbuildOptions: {
       resolveExtensions: ['.web.tsx', '.web.ts', '.web.jsx', '.web.js', '.tsx', '.ts', '.jsx', '.js'],
     },
+    include: ['expo-router', 'react-native-web'],
   },
 });
