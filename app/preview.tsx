@@ -122,13 +122,19 @@ export default function PreviewScreen() {
         <View style={[styles.bottomBar, { paddingBottom: bottomPadding }]} pointerEvents="box-none">
           <View style={styles.photopeaHint} testID="photopea-hint">
             <Info size={14} color={Colors.textTertiary} />
-            <Text style={styles.photopeaText}>
-              Use{' '}
-              <Text style={styles.photopeaLink} onPress={openPhotopea}>
-                photopea.com
-              </Text>{' '}
-              to remove the Rork logo from photos
-            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.photopeaText}>
+                Use{' '}
+                <Text 
+                  style={styles.photopeaLink} 
+                  onPress={openPhotopea}
+                  suppressHighlighting={false}
+                >
+                  photopea.com
+                </Text>{' '}
+                to remove the Rork logo from photos
+              </Text>
+            </View>
           </View>
 
           <Pressable
