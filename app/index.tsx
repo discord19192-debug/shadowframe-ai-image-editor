@@ -469,13 +469,7 @@ export default function EditorScreen() {
             textAlignVertical="top"
           />
 
-          <View style={styles.promptTipsContainer}>
-            <Text style={styles.promptTipsTitle}>💡 Tips for best results:</Text>
-            <Text style={styles.promptTip}>• Use descriptive, neutral language</Text>
-            <Text style={styles.promptTip}>• Describe lighting, colors, and composition</Text>
-            <Text style={styles.promptTip}>• Avoid referencing specific people or copyrighted content</Text>
-            <Text style={styles.promptTip}>• Be specific about desired changes</Text>
-          </View>
+
 
 
 
