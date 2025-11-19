@@ -5,7 +5,9 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [
-    react(),
+    react({
+      include: /\.(jsx|js|tsx|ts)$/,
+    }),
     viteStaticCopy({
       targets: [
         {
@@ -30,9 +32,6 @@ export default defineConfig({
       transformMixedEsModules: true,
       include: [/node_modules/],
     },
-    rollupOptions: {
-      external: [],
-    },
   },
   optimizeDeps: {
     esbuildOptions: {
@@ -41,7 +40,6 @@ export default defineConfig({
         '.js': 'jsx',
       },
     },
-    include: ['react-native-web'],
-    exclude: ['expo-router'],
+    include: ['react-native-web', 'expo-router'],
   },
 });
