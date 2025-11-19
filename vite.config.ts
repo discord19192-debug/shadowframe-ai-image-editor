@@ -22,7 +22,7 @@ export default defineConfig({
     },
     extensions: ['.web.tsx', '.web.ts', '.web.jsx', '.web.js', '.tsx', '.ts', '.jsx', '.js'],
   },
-  base: '/shadowframe-image-editor/',
+  base: '/shadowframe-ai-image-editor/',
   build: {
     outDir: 'dist',
     sourcemap: true,
