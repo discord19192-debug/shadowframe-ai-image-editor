@@ -28,12 +28,20 @@ export default defineConfig({
     sourcemap: true,
     commonjsOptions: {
       transformMixedEsModules: true,
+      include: [/node_modules/],
+    },
+    rollupOptions: {
+      external: [],
     },
   },
   optimizeDeps: {
     esbuildOptions: {
       resolveExtensions: ['.web.tsx', '.web.ts', '.web.jsx', '.web.js', '.tsx', '.ts', '.jsx', '.js'],
+      loader: {
+        '.js': 'jsx',
+      },
     },
-    include: ['expo-router', 'react-native-web'],
+    include: ['react-native-web'],
+    exclude: ['expo-router'],
   },
 });
