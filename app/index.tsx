@@ -117,7 +117,7 @@ export default function EditorScreen() {
             const errorStr = typeof errorData.error === 'string' ? errorData.error : JSON.stringify(errorData.error);
             
             if (errorStr.includes('BLOCK') || errorStr.toLowerCase().includes('blocked') || errorStr.toLowerCase().includes('safety')) {
-              errorMessage = 'Content was blocked by safety filters. Please try:\n• Using more neutral, descriptive language\n• Avoiding face swaps or identity-related edits\n• Making simpler edits (lighting, background, style changes)';
+              errorMessage = 'Request blocked. Try rephrasing your instructions or simplifying the edit.';
             } else if (errorStr.includes('RECITATION')) {
               errorMessage = 'Request blocked: The prompt may reference copyrighted content. Try describing the edit in your own words.';
             } else {
@@ -136,7 +136,7 @@ export default function EditorScreen() {
             const errorText = await response.text();
             console.error('Error text:', errorText);
             if (errorText.toLowerCase().includes('blocked') || errorText.toLowerCase().includes('safety')) {
-              errorMessage = 'Content was blocked by safety filters. Please try more neutral, descriptive language and avoid potentially sensitive edits.';
+              errorMessage = 'Request blocked. Try rephrasing your instructions or simplifying the edit.';
             } else {
               errorMessage = `Request failed with status ${response.status}. Please try again.`;
             }
@@ -376,7 +376,7 @@ export default function EditorScreen() {
                     safetyMode === 'balanced' && styles.safetyToggleTextActive,
                   ]}
                 >
-                  Balanced Guard
+                  Guided Mode
                 </Text>
               </Pressable>
               <Pressable
