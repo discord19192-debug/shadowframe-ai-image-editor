@@ -65,6 +65,7 @@ export default function EditorScreen() {
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [permission, requestPermission] = MediaLibrary.usePermissions();
   const [scrollProgress, setScrollProgress] = useState<number>(0);
+  const [scrollThumbWidth, setScrollThumbWidth] = useState<number>(40);
   const historyScrollRef = useRef<ScrollView>(null);
 
   const triggerSuccessHaptics = useCallback(() => {
@@ -355,8 +356,11 @@ export default function EditorScreen() {
       if (maxScrollDistance > 0) {
         const progress = contentOffset.x / maxScrollDistance;
         setScrollProgress(Math.max(0, Math.min(1, progress)));
+        const thumbWidth = Math.max(20, (layoutMeasurement.width / contentSize.width) * 100);
+        setScrollThumbWidth(thumbWidth);
       } else {
         setScrollProgress(0);
+        setScrollThumbWidth(100);
       }
     },
     [],
@@ -364,12 +368,12 @@ export default function EditorScreen() {
 
   const scrollBarThumbStyle = useMemo(() => {
     const trackWidth = 100;
-    const thumbWidth = 40;
-    const maxOffset = trackWidth - thumbWidth;
+    const maxOffset = trackWidth - scrollThumbWidth;
     return {
+      width: `${scrollThumbWidth}%`,
       transform: [{ translateX: scrollProgress * maxOffset }],
     };
-  }, [scrollProgress]);
+  }, [scrollProgress, scrollThumbWidth]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']} testID="editor-screen">
@@ -918,7 +922,6 @@ const styles = StyleSheet.create({
   },
   scrollBarThumb: {
     height: 4,
-    width: '40%',
     backgroundColor: Colors.purple,
     borderRadius: 2,
   },
