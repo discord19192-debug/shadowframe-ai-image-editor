@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     react({
       include: [
-        /\/node_modules\/expo-router\/build\/.*\.js$/,
+        /\/node_modules\/expo-router\/build\/.*\.(js|jsx|ts|tsx)(\?.*)?$/,
         /\.(jsx|js|tsx|ts)$/
       ],
     }),
@@ -41,6 +41,7 @@ export default defineConfig({
       resolveExtensions: ['.web.tsx', '.web.ts', '.web.jsx', '.web.js', '.tsx', '.ts', '.jsx', '.js'],
       loader: {
         '.js': 'jsx',
+        '.cjs': 'jsx',
       },
     },
     include: ['react-native-web', 'expo-router'],
