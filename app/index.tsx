@@ -1,7 +1,6 @@
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
-import { useMediaLibraryPermissionsSafe } from '@/hooks/useMediaLibraryPermissions';
 import { File, Paths } from 'expo-file-system';
 import { router } from 'expo-router';
 import { Camera, ImagePlus, Sparkles, X, Download, Undo2, AlertCircle, Merge } from 'lucide-react-native';
@@ -39,7 +38,7 @@ export default function EditorScreen() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'single' | 'merge'>('single');
   const [isDownloading, setIsDownloading] = useState(false);
-  const [permission, requestPermission] = useMediaLibraryPermissionsSafe();
+  const [permission, requestPermission] = MediaLibrary.usePermissions();
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -63,14 +62,11 @@ export default function EditorScreen() {
   };
 
   const generateEdit = async () => {
-    const trimmedPrompt = prompt.trim();
-    if (images.length === 0 || !trimmedPrompt) return;
+    if (images.length === 0 || !prompt.trim()) return;
 
     Keyboard.dismiss();
     setIsGenerating(true);
     setError(null);
-
-    const promptForRequest = trimmedPrompt;
 
     try {
       const imageData = images.map((img) => ({
@@ -78,54 +74,58 @@ export default function EditorScreen() {
         image: img.base64,
       }));
 
-      const baseUrl = process.env.EXPO_PUBLIC_RORK_API_BASE_URL;
-      const endpoint = baseUrl ? `${baseUrl}/api/images/edit` : '/api/images/edit';
-
       console.log('Sending edit request with', imageData.length, 'images');
-      console.log('Using prompt:', promptForRequest);
-      console.log('Endpoint:', endpoint);
-      const response = await fetch(endpoint, {
+      const response = await fetch('https://toolkit.rork.com/images/edit/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: promptForRequest,
+          prompt: prompt.trim(),
           images: imageData,
           aspectRatio: '16:9',
         }),
       });
 
       console.log('Response status:', response.status);
-
+      
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('API error payload:', errorText);
-        let errorMessage = 'Failed to generate image. Please try again.';
-
-        if (errorText) {
-          try {
-            const parsed = JSON.parse(errorText) as { message?: unknown; error?: unknown };
-            const candidate = typeof parsed.message === 'string' ? parsed.message : typeof parsed.error === 'string' ? parsed.error : null;
-            if (candidate && candidate.length > 0) {
-              errorMessage = candidate;
+        let errorMessage = 'Failed to generate image';
+        try {
+          const errorData = await response.json();
+          console.error('API error:', JSON.stringify(errorData, null, 2));
+          
+          if (errorData.error) {
+            const errorStr = typeof errorData.error === 'string' ? errorData.error : JSON.stringify(errorData.error);
+            
+            if (errorStr.includes('BLOCK') || errorStr.toLowerCase().includes('blocked') || errorStr.toLowerCase().includes('safety')) {
+              errorMessage = 'Content was blocked by safety filters. Please try:\n• Using more neutral, descriptive language\n• Avoiding face swaps or identity-related edits\n• Making simpler edits (lighting, background, style changes)';
+            } else if (errorStr.includes('RECITATION')) {
+              errorMessage = 'Request blocked: The prompt may reference copyrighted content. Try describing the edit in your own words.';
+            } else {
+              errorMessage = `Error: ${errorStr}`;
             }
-          } catch (parseError) {
-            console.error('Error parsing JSON error response:', parseError);
-            errorMessage = errorText;
+          } else if (response.status === 422) {
+            errorMessage = 'Invalid request. Please check your images and prompt.';
+          } else if (response.status === 429) {
+            errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
+          } else if (response.status >= 500) {
+            errorMessage = 'Server error. Please try again in a moment.';
+          }
+        } catch (e) {
+          console.error('Error parsing error response:', e);
+          try {
+            const errorText = await response.text();
+            console.error('Error text:', errorText);
+            if (errorText.toLowerCase().includes('blocked') || errorText.toLowerCase().includes('safety')) {
+              errorMessage = 'Content was blocked by safety filters. Please try more neutral, descriptive language and avoid potentially sensitive edits.';
+            } else {
+              errorMessage = `Request failed with status ${response.status}. Please try again.`;
+            }
+          } catch {
+            errorMessage = `Request failed with status ${response.status}. Please try again.`;
           }
         }
-
-        if (response.status === 429) {
-          errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
-        } else if (response.status === 422) {
-          errorMessage = 'Invalid request. Please verify your images and instructions.';
-        } else if (response.status === 503) {
-          errorMessage = 'Service temporarily unavailable. Please retry shortly.';
-        } else if (response.status === 504) {
-          errorMessage = 'The request timed out. Please try again.';
-        }
-
         throw new Error(errorMessage);
       }
 
@@ -137,19 +137,15 @@ export default function EditorScreen() {
         ...prev,
         {
           image: base64Image,
-          prompt: promptForRequest,
+          prompt: prompt.trim(),
           timestamp: Date.now(),
         },
       ]);
       setEditedImage(base64Image);
       setPrompt('');
-    } catch (caughtError) {
-      console.error('Error generating image:', caughtError);
-      if (caughtError instanceof TypeError) {
-        setError('Network error: Unable to reach the image editing service. Please check your connection and try again.');
-      } else {
-        setError(caughtError instanceof Error ? caughtError.message : 'Failed to generate image');
-      }
+    } catch (error) {
+      console.error('Error generating image:', error);
+      setError(error instanceof Error ? error.message : 'Failed to generate image');
     } finally {
       setIsGenerating(false);
     }
@@ -288,7 +284,6 @@ export default function EditorScreen() {
                 <TouchableOpacity
                   style={styles.removeButton}
                   onPress={() => removeImage(index)}
-                  testID={`remove-image-${index}`}
                 >
                   <X size={16} color={Colors.text} />
                 </TouchableOpacity>
@@ -297,20 +292,12 @@ export default function EditorScreen() {
 
             {(activeTab === 'single' || (activeTab === 'merge' && images.length < 2)) && (
               <>
-                <TouchableOpacity
-                  style={styles.addImageButton}
-                  onPress={pickImage}
-                  testID="add-image-from-library-button"
-                >
+                <TouchableOpacity style={styles.addImageButton} onPress={pickImage}>
                   <ImagePlus size={32} color={Colors.purple} />
                   <Text style={styles.addImageText}>Gallery</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.addImageButton}
-                  onPress={takePhoto}
-                  testID="open-camera-button"
-                >
+                <TouchableOpacity style={styles.addImageButton} onPress={takePhoto}>
                   <Camera size={32} color={Colors.blueLight} />
                   <Text style={styles.addImageText}>Camera</Text>
                 </TouchableOpacity>
@@ -338,7 +325,7 @@ export default function EditorScreen() {
             placeholder={
               activeTab === 'single'
                 ? "e.g., 'Make it look cyberpunk' or 'Add dramatic lighting'"
-                : "e.g., 'Blend both portraits into a cinematic double exposure'"
+                : "e.g., 'Put the face from first photo onto the second photo'"
             }
             placeholderTextColor={Colors.textTertiary}
             value={prompt}
@@ -362,7 +349,6 @@ export default function EditorScreen() {
             ]}
             onPress={generateEdit}
             disabled={!canGenerate || isGenerating}
-            testID="generate-edit-button"
           >
             {isGenerating ? (
               <ActivityIndicator color={Colors.text} />
@@ -381,11 +367,7 @@ export default function EditorScreen() {
               <Text style={styles.sectionTitle}>Result</Text>
               <View style={styles.resultActions}>
                 {editHistory.length > 0 && (
-                  <TouchableOpacity
-                    style={styles.iconButton}
-                    onPress={undoLastEdit}
-                    testID="undo-last-edit-button"
-                  >
+                  <TouchableOpacity style={styles.iconButton} onPress={undoLastEdit}>
                     <Undo2 size={20} color={Colors.textSecondary} />
                   </TouchableOpacity>
                 )}
@@ -396,7 +378,6 @@ export default function EditorScreen() {
               style={styles.resultCard}
               onPress={viewFullScreen}
               activeOpacity={0.9}
-              testID="view-fullscreen-result"
             >
               <Image
                 source={{ uri: editedImage }}
@@ -414,7 +395,6 @@ export default function EditorScreen() {
               <Pressable
                 style={styles.continueButton}
                 onPress={() => continueEditing(editedImage)}
-                testID="continue-edit-button"
               >
                 <Sparkles size={18} color={Colors.text} />
                 <Text style={styles.continueButtonText}>Continue Editing</Text>
@@ -424,7 +404,6 @@ export default function EditorScreen() {
                 style={[styles.downloadButton, isDownloading && styles.downloadButtonDisabled]}
                 onPress={() => downloadImage(editedImage)}
                 disabled={isDownloading}
-                testID="download-edited-image-button"
               >
                 {isDownloading ? (
                   <ActivityIndicator size="small" color={Colors.text} />
@@ -458,7 +437,6 @@ export default function EditorScreen() {
                   key={item.timestamp}
                   style={styles.historyCard}
                   onPress={() => continueEditing(item.image)}
-                  testID={`history-card-${index}`}
                 >
                   <Image
                     source={{ uri: item.image }}
