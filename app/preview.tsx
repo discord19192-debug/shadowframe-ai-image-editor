@@ -3,11 +3,13 @@ import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Download, Info } from 'lucide-react-native';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Linking,
+  PanResponder,
   Platform,
   Pressable,
   StyleSheet,
@@ -34,10 +36,113 @@ export default function PreviewScreen() {
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [permission, requestPermission] = MediaLibrary.usePermissions();
   const insets = useSafeAreaInsets();
+  const [controlsVisible, setControlsVisible] = useState<boolean>(true);
+
+  const scale = useRef(new Animated.Value(1)).current;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+  const lastScale = useRef<number>(1);
+  const lastTranslateX = useRef<number>(0);
+  const lastTranslateY = useRef<number>(0);
+  const lastTap = useRef<number>(0);
 
   const hasImage = useMemo(() => typeof params.image === 'string' && params.image.length > 0, [params.image]);
   const topPadding = useMemo(() => Math.max(insets.top + 20, 32), [insets.top]);
   const bottomPadding = useMemo(() => Math.max(insets.bottom + 24, 32), [insets.bottom]);
+
+  const resetZoom = useCallback(() => {
+    Animated.parallel([
+      Animated.spring(scale, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 7,
+      }),
+      Animated.spring(translateX, {
+        toValue: 0,
+        useNativeDriver: true,
+        friction: 7,
+      }),
+      Animated.spring(translateY, {
+        toValue: 0,
+        useNativeDriver: true,
+        friction: 7,
+      }),
+    ]).start();
+    lastScale.current = 1;
+    lastTranslateX.current = 0;
+    lastTranslateY.current = 0;
+  }, [scale, translateX, translateY]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5 || gestureState.numberActiveTouches === 2;
+      },
+      onPanResponderGrant: (evt) => {
+        const now = Date.now();
+        if (now - lastTap.current < 300) {
+          if (lastScale.current > 1) {
+            resetZoom();
+          } else {
+            Animated.parallel([
+              Animated.spring(scale, {
+                toValue: 2.5,
+                useNativeDriver: true,
+                friction: 7,
+              }),
+            ]).start();
+            lastScale.current = 2.5;
+          }
+        }
+        lastTap.current = now;
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (gestureState.numberActiveTouches === 2) {
+          const touches = evt.nativeEvent.touches;
+          if (touches.length >= 2) {
+            const touch1 = touches[0];
+            const touch2 = touches[1];
+            const distance = Math.sqrt(
+              Math.pow(touch2.pageX - touch1.pageX, 2) + Math.pow(touch2.pageY - touch1.pageY, 2)
+            );
+            const baseDistance = Math.sqrt(
+              Math.pow(
+                (touch2.pageX - gestureState.dx) - (touch1.pageX - gestureState.dx),
+                2
+              ) +
+                Math.pow(
+                  (touch2.pageY - gestureState.dy) - (touch1.pageY - gestureState.dy),
+                  2
+                )
+            );
+            if (baseDistance > 0) {
+              const newScale = Math.max(1, Math.min(5, lastScale.current * (distance / baseDistance)));
+              scale.setValue(newScale);
+            }
+          }
+        } else if (lastScale.current > 1) {
+          translateX.setValue(lastTranslateX.current + gestureState.dx);
+          translateY.setValue(lastTranslateY.current + gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.numberActiveTouches === 0) {
+          lastScale.current = (scale as Animated.Value & { _value: number })._value;
+          lastTranslateX.current = (translateX as Animated.Value & { _value: number })._value;
+          lastTranslateY.current = (translateY as Animated.Value & { _value: number })._value;
+
+          if (lastScale.current < 1.2) {
+            resetZoom();
+          }
+        }
+      },
+    })
+  ).current;
+
+  const toggleControls = useCallback(() => {
+    setControlsVisible((prev) => !prev);
+  }, []);
 
   const handleBack = useCallback(() => {
     console.log(logTag, 'Returning to editor');
@@ -110,9 +215,24 @@ export default function PreviewScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']} testID="preview-screen">
-      <Image source={{ uri: params.image }} style={styles.image} contentFit="contain" />
+      <Animated.View
+        style={[
+          styles.imageContainer,
+          {
+            transform: [
+              { scale },
+              { translateX },
+              { translateY },
+            ],
+          },
+        ]}
+        {...panResponder.panHandlers}
+      >
+        <Image source={{ uri: params.image }} style={styles.image} contentFit="contain" />
+      </Animated.View>
 
-      <View style={styles.overlay} pointerEvents="box-none">
+      {controlsVisible && (
+        <View style={styles.overlay} pointerEvents="box-none">
         <View style={[styles.topBar, { paddingTop: topPadding }]} pointerEvents="box-none">
           <TouchableOpacity testID="preview-back" style={styles.button} onPress={handleBack}>
             <ArrowLeft size={24} color={Colors.text} />
@@ -154,7 +274,17 @@ export default function PreviewScreen() {
             )}
           </Pressable>
         </View>
-      </View>
+        </View>
+      )}
+
+      <TouchableOpacity
+        style={styles.toggleControlsButton}
+        onPress={toggleControls}
+        activeOpacity={0.7}
+        testID="toggle-controls"
+      >
+        <View style={styles.toggleControlsIndicator} />
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -163,6 +293,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  imageContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
   },
   image: {
     flex: 1,
@@ -258,5 +393,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700' as const,
     color: Colors.text,
+  },
+  toggleControlsButton: {
+    position: 'absolute',
+    top: '50%',
+    right: 16,
+    width: 48,
+    height: 48,
+    marginTop: -24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toggleControlsIndicator: {
+    width: 4,
+    height: 32,
+    borderRadius: 2,
+    backgroundColor: 'rgba(138, 43, 226, 0.4)',
   },
 });
