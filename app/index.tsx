@@ -87,10 +87,13 @@ export default function EditorScreen() {
 
   const buildImagePayload = useCallback(() => {
     console.log(logTag, 'Preparing payload for', images.length, 'image(s)');
-    return images.map((img) => ({
-      type: 'image' as const,
-      image: img.base64,
-    }));
+    return images.map((img) => {
+      const base64Data = img.base64.startsWith('data:') ? img.base64 : `data:image/jpeg;base64,${img.base64}`;
+      return {
+        type: 'image' as const,
+        image: base64Data,
+      };
+    });
   }, [images]);
 
   const parseErrorResponse = useCallback(async (response: Response) => {
