@@ -157,29 +157,41 @@ export default function PreviewScreen() {
   const downloadImage = useCallback(async () => {
     if (!hasImage || typeof params.image !== 'string') {
       console.log(logTag, 'No image available for download');
+      Alert.alert('Error', 'No image available to download.');
       return;
     }
     console.log(logTag, 'Initiating download');
+    
     if (Platform.OS === 'web') {
-      if (typeof document !== 'undefined') {
-        const link = document.createElement('a');
-        link.href = params.image;
-        link.download = `shadowframe-${Date.now()}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } else {
-        console.log(logTag, 'Document not available for web download');
+      try {
+        if (typeof document !== 'undefined') {
+          const link = document.createElement('a');
+          link.href = params.image;
+          link.download = `shadowframe-${Date.now()}.png`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          console.log(logTag, 'Web download initiated');
+        } else {
+          console.log(logTag, 'Document not available for web download');
+          Alert.alert('Error', 'Download not available on this platform.');
+        }
+      } catch (webError) {
+        console.log(logTag, 'Web download failed', webError);
+        Alert.alert('Error', 'Failed to download image.');
       }
       return;
     }
+
     if (!permission?.granted) {
+      console.log(logTag, 'Requesting media library permission');
       const permissionResult = await requestPermission();
       if (!permissionResult.granted) {
-        Alert.alert('Permission required', 'Allow gallery access to save your image.');
+        Alert.alert('Permission Required', 'Allow gallery access to save your image.');
         return;
       }
     }
+
     setIsDownloading(true);
     try {
       const directory = resolveWritableDirectory();
@@ -189,13 +201,29 @@ export default function PreviewScreen() {
       const filename = `shadowframe-${Date.now()}.png`;
       const fileUri = `${directory}${filename}`;
       const base64Data = params.image.split(',')[1];
+      
+      if (!base64Data) {
+        throw new Error('Invalid image data.');
+      }
+
+      console.log(logTag, 'Writing file to', fileUri);
       await FileSystem.writeAsStringAsync(fileUri, base64Data, { encoding: 'base64' });
+      
+      console.log(logTag, 'Creating media library asset');
       const asset = await MediaLibrary.createAssetAsync(fileUri);
-      await MediaLibrary.createAlbumAsync('ShadowFrame', asset, false);
-      Alert.alert('Saved', 'Image added to your gallery.');
+      
+      try {
+        await MediaLibrary.createAlbumAsync('ShadowFrame', asset, false);
+      } catch (albumError) {
+        console.log(logTag, 'Album creation skipped or failed', albumError);
+      }
+      
+      console.log(logTag, 'Image saved successfully');
+      Alert.alert('Success', 'Image saved to your gallery!');
     } catch (error) {
       console.log(logTag, 'Failed to save image', error);
-      Alert.alert('Error', 'Could not save the image.');
+      const errorMessage = error instanceof Error ? error.message : 'Could not save the image.';
+      Alert.alert('Error', errorMessage);
     } finally {
       setIsDownloading(false);
     }
@@ -397,17 +425,17 @@ const styles = StyleSheet.create({
   toggleControlsButton: {
     position: 'absolute',
     top: '50%',
-    right: 16,
-    width: 48,
-    height: 48,
-    marginTop: -24,
+    right: 12,
+    width: 56,
+    height: 56,
+    marginTop: -28,
     alignItems: 'center',
     justifyContent: 'center',
   },
   toggleControlsIndicator: {
-    width: 4,
-    height: 32,
-    borderRadius: 2,
-    backgroundColor: 'rgba(138, 43, 226, 0.4)',
+    width: 6,
+    height: 40,
+    borderRadius: 3,
+    backgroundColor: 'rgba(138, 43, 226, 0.5)',
   },
 });
