@@ -187,7 +187,8 @@ export default function PreviewScreen() {
       console.log(logTag, 'Requesting media library permission');
       const permissionResult = await requestPermission();
       if (!permissionResult.granted) {
-        Alert.alert('Permission Required', 'Allow gallery access to save your image.');
+        console.log(logTag, 'Permission denied by user');
+        Alert.alert('Permission Required', 'Please allow gallery access in settings to save images.');
         return;
       }
     }
@@ -200,9 +201,17 @@ export default function PreviewScreen() {
       }
       const filename = `shadowframe-${Date.now()}.png`;
       const fileUri = `${directory}${filename}`;
-      const base64Data = params.image.split(',')[1];
       
-      if (!base64Data) {
+      let base64Data: string;
+      if (params.image.includes('base64,')) {
+        base64Data = params.image.split('base64,')[1];
+      } else if (params.image.includes(',')) {
+        base64Data = params.image.split(',')[1];
+      } else {
+        base64Data = params.image;
+      }
+      
+      if (!base64Data || base64Data.length === 0) {
         throw new Error('Invalid image data.');
       }
 
@@ -214,6 +223,7 @@ export default function PreviewScreen() {
       
       try {
         await MediaLibrary.createAlbumAsync('ShadowFrame', asset, false);
+        console.log(logTag, 'Image saved to ShadowFrame album');
       } catch (albumError) {
         console.log(logTag, 'Album creation skipped or failed', albumError);
       }
