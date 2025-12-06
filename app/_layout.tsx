@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
-import { View, Platform } from "react-native";
+
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { ImagesContext } from "@/contexts/ImagesContext";
 
@@ -39,16 +40,12 @@ export default function RootLayout() {
     SplashScreen.hideAsync();
   }, []);
 
-  const GestureWrapper = Platform.OS === 'web' 
-    ? ({ children }: { children: React.ReactNode }) => <View style={{ flex: 1 }}>{children}</View>
-    : require('react-native-gesture-handler').GestureHandlerRootView;
-
   return (
     <QueryClientProvider client={queryClient}>
       <ImagesContext>
-        <GestureWrapper style={{ flex: 1 }}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
           <RootLayoutNav />
-        </GestureWrapper>
+        </GestureHandlerRootView>
       </ImagesContext>
     </QueryClientProvider>
   );
