@@ -37,9 +37,19 @@ export default function PreviewScreen() {
   const [permission, setPermission] = useState<MediaLibrary.PermissionResponse | null>(null);
 
   useEffect(() => {
-    MediaLibrary.getPermissionsAsync().then(setPermission).catch((err) => {
-      console.log(logTag, 'Failed to get permissions', err);
-    });
+    let isMounted = true;
+    if (Platform.OS !== 'web') {
+      MediaLibrary.getPermissionsAsync().then((result) => {
+        if (isMounted) {
+          setPermission(result);
+        }
+      }).catch((err) => {
+        console.log(logTag, 'Failed to get permissions', err);
+      });
+    }
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const requestPermission = useCallback(async () => {
