@@ -1,5 +1,5 @@
 import createContextHook from '@nkzw/create-context-hook';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 export interface SelectedImage {
   uri: string;
@@ -21,13 +21,10 @@ export const [ImagesContext, useImages] = createContextHook(() => {
     setImages([]);
   }, []);
 
-  return useMemo(
-    () => ({
-      images,
-      addImage,
-      removeImage,
-      clearImages,
-    }),
-    [images, addImage, removeImage, clearImages]
-  );
+  return {
+    images,
+    addImage,
+    removeImage,
+    clearImages,
+  };
 });
