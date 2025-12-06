@@ -42,7 +42,7 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <ImagesContext>
-        <GestureHandlerRootView>
+        <GestureHandlerRootView style={{ flex: 1 }}>
           <RootLayoutNav />
         </GestureHandlerRootView>
       </ImagesContext>
