@@ -15,7 +15,7 @@ import {
   Undo2,
   X,
 } from 'lucide-react-native';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -63,7 +63,19 @@ export default function EditorScreen() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('single');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
-  const [permission, requestPermission] = MediaLibrary.usePermissions();
+  const [permission, setPermission] = useState<MediaLibrary.PermissionResponse | null>(null);
+
+  useEffect(() => {
+    MediaLibrary.getPermissionsAsync().then(setPermission).catch((err) => {
+      console.log(logTag, 'Failed to get permissions', err);
+    });
+  }, []);
+
+  const requestPermission = useCallback(async () => {
+    const result = await MediaLibrary.requestPermissionsAsync();
+    setPermission(result);
+    return result;
+  }, []);
 
   const triggerSuccessHaptics = useCallback(() => {
     if (Platform.OS !== 'web') {

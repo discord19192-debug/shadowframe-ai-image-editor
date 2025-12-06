@@ -3,7 +3,7 @@ import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Download, Info } from 'lucide-react-native';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -34,7 +34,19 @@ function resolveWritableDirectory(): string | null {
 export default function PreviewScreen() {
   const params = useLocalSearchParams<{ image: string }>();
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
-  const [permission, requestPermission] = MediaLibrary.usePermissions();
+  const [permission, setPermission] = useState<MediaLibrary.PermissionResponse | null>(null);
+
+  useEffect(() => {
+    MediaLibrary.getPermissionsAsync().then(setPermission).catch((err) => {
+      console.log(logTag, 'Failed to get permissions', err);
+    });
+  }, []);
+
+  const requestPermission = useCallback(async () => {
+    const result = await MediaLibrary.requestPermissionsAsync();
+    setPermission(result);
+    return result;
+  }, []);
   const insets = useSafeAreaInsets();
   const [controlsVisible, setControlsVisible] = useState<boolean>(true);
 
