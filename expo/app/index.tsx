@@ -33,6 +33,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Colors from '@/constants/colors';
 import { useImages } from '@/contexts/ImagesContext';
+import { resizeForUpload, stripDataUriPrefix } from '@/lib/resize-for-upload';
 
 type ActiveTab = 'single' | 'merge';
 type AspectRatio = '16:9' | '9:16';
@@ -44,6 +45,15 @@ interface EditHistoryItem {
 }
 
 const logTag = '[ShadowFrame Editor]' as const;
+
+const EDIT_MODEL = 'openai/gpt-image-2' as const;
+const TOOLKIT_URL = process.env.EXPO_PUBLIC_TOOLKIT_URL ?? 'https://toolkit.rork.com';
+const TOOLKIT_KEY = process.env.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY ?? '';
+const IMAGE_MODEL_HEADERS = {
+  'ai-gateway-protocol-version': '0.0.1',
+  'ai-image-model-specification-version': '4',
+  'ai-model-id': EDIT_MODEL,
+} as const;
 
 function resolveWritableDirectory(): string | null {
   const fileSystem = FileSystem as unknown as {
@@ -107,12 +117,15 @@ export default function EditorScreen() {
     }
   }, []);
 
-  const buildImagePayload = useCallback(() => {
+  const buildImagePayload = useCallback(async () => {
     console.log(logTag, 'Preparing payload for', images.length, 'image(s)');
-    return images.map((img) => ({
-      type: 'image' as const,
-      image: img.base64,
-    }));
+    const perImageBudget = Math.floor(3_000_000 / Math.max(images.length, 1));
+    const files: Array<{ type: 'file'; mediaType: 'image/jpeg'; data: string }> = [];
+    for (const img of images) {
+      const { base64 } = await resizeForUpload(img.uri, perImageBudget);
+      files.push({ type: 'file', mediaType: 'image/jpeg', data: base64 });
+    }
+    return files;
   }, [images]);
 
   const parseErrorResponse = useCallback(async (response: Response) => {
@@ -154,7 +167,7 @@ export default function EditorScreen() {
 
   const runEditRequest = useCallback(
     async (promptValue: string) => {
-      const payload = buildImagePayload();
+      const payload = await buildImagePayload();
       if (payload.length === 0) {
         throw new Error('Add at least one image to continue.');
       }
@@ -164,16 +177,21 @@ export default function EditorScreen() {
         mode: activeTab,
       });
       const body = JSON.stringify({
+        model: EDIT_MODEL,
         prompt: promptValue,
-        images: payload,
-        aspectRatio: aspectRatio,
+        n: 1,
+        providerOptions: {},
+        size: aspectRatio === '9:16' ? '1024x1536' : '1536x1024',
+        files: payload,
       });
       let response: Response;
       try {
-        response = await fetch('https://toolkit.rork.com/images/edit/', {
+        response = await fetch(`${TOOLKIT_URL}/v2/vercel/v3/ai/image-model`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            Authorization: `Bearer ${TOOLKIT_KEY}`,
+            ...IMAGE_MODEL_HEADERS,
           },
           body,
         });
@@ -187,6 +205,9 @@ export default function EditorScreen() {
       }
       console.log(logTag, 'Edit response status', response.status);
       if (!response.ok) {
+        if (response.status === 413) {
+          throw new Error('The images are too large for this request. Try smaller or fewer photos.');
+        }
         const message = await parseErrorResponse(response);
         throw new Error(message);
       }
@@ -197,8 +218,9 @@ export default function EditorScreen() {
         console.log(logTag, 'Failed to parse edit response', jsonError);
         throw new Error('Received an unexpected response from the edit service.');
       }
-      const imagePayload = (data as { image?: { base64Data?: string; mimeType?: string }; error?: unknown; text?: unknown }).image;
-      if (!imagePayload?.base64Data || !imagePayload?.mimeType) {
+      const resultImages = (data as { images?: unknown; error?: unknown; text?: unknown }).images;
+      const firstImage = Array.isArray(resultImages) && typeof resultImages[0] === 'string' ? resultImages[0] : undefined;
+      if (!firstImage || firstImage.length === 0) {
         console.log(logTag, 'No image payload returned', data);
         const messageCandidates = [
           typeof (data as { error?: unknown }).error === 'string' ? (data as { error?: string }).error : undefined,
@@ -211,7 +233,7 @@ export default function EditorScreen() {
         }
         throw new Error('No edited image was produced. Try a different prompt.');
       }
-      const composed = `data:${imagePayload.mimeType};base64,${imagePayload.base64Data}`;
+      const composed = firstImage.startsWith('data:') ? firstImage : `data:image/png;base64,${stripDataUriPrefix(firstImage)}`;
       console.log(logTag, 'Edit request succeeded');
       return { imageUri: composed, promptUsed: promptValue };
     },
