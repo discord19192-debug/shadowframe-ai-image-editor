@@ -62,6 +62,29 @@ interface EditAttemptResult {
   detail?: string;
 }
 
+interface ImageModelOption {
+  id: string;
+  name: string;
+  note: string;
+}
+
+// Verified against the v2 image-model endpoint with base64 file input.
+// Recraft v4 models were tested and reject image-editing inputs, so they are
+// intentionally not offered here.
+const IMAGE_MODELS: ImageModelOption[] = [
+  { id: 'openai/gpt-image-2', name: 'GPT Image 2', note: 'Photorealistic edits' },
+  { id: 'openai/gpt-image-1.5', name: 'GPT Image 1.5', note: 'Previous, cheaper' },
+  { id: 'bfl/flux-kontext-max', name: 'Kontext Max', note: 'Purpose-built edits' },
+  { id: 'bfl/flux-kontext-pro', name: 'Kontext Pro', note: 'Instruction edits' },
+  { id: 'bytedance/seedream-5.0-pro', name: 'Seedream 5 Pro', note: 'Fast, vivid' },
+  { id: 'bytedance/seedream-4.5', name: 'Seedream 4.5', note: 'Fast, vivid' },
+  { id: 'bfl/flux-3-image', name: 'Flux 3', note: 'Flagship generator' },
+  { id: 'bfl/flux-2-max', name: 'Flux 2 Max', note: 'Flagship generator' },
+  { id: 'bfl/flux-2-pro', name: 'Flux 2 Pro', note: 'Generator' },
+  { id: 'microsoft/mai-image-2.6', name: 'MAI Image 2.6', note: 'Microsoft' },
+  { id: 'spacexai/grok-imagine-image', name: 'Grok Imagine', note: 'xAI' },
+];
+
 function resolveWritableDirectory(): string | null {
   const fileSystem = FileSystem as unknown as {
     cacheDirectory?: string | null;
@@ -79,6 +102,7 @@ export default function EditorScreen() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('single');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
+  const [selectedModel, setSelectedModel] = useState<string>(EDIT_MODEL);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [permission, setPermission] = useState<MediaLibrary.PermissionResponse | null>(null);
 
@@ -268,11 +292,12 @@ export default function EditorScreen() {
         return { imageUri: primary.imageUri, promptUsed: promptValue };
       }
 
-      // The primary model declined the request or returned nothing. A second
-      // provider applies different (still provider-side) policies, so a
-      // legitimate edit may succeed there. Every provider still enforces its
-      // own content rules; nothing is bypassed.
-      if (primary.reason === 'blocked' || primary.reason === 'empty') {
+      // The model declined the request or returned nothing. A second provider
+      // applies different (still provider-side) policies, so a legitimate edit
+      // may succeed there. Only applies to the default model — an explicitly
+      // chosen model surfaces its own error instead. Every provider still
+      // enforces its own content rules; nothing is bypassed.
+      if ((primary.reason === 'blocked' || primary.reason === 'empty') && selectedModel === EDIT_MODEL) {
         console.log(logTag, 'Primary model declined, retrying with fallback model', FALLBACK_EDIT_MODEL);
         const fallback = await performAttempt(FALLBACK_EDIT_MODEL);
         if (fallback.ok && fallback.imageUri) {
@@ -287,7 +312,7 @@ export default function EditorScreen() {
 
       throw new Error(primary.detail ?? 'Could not edit the image. Try again in a moment.');
     },
-    [aspectRatio, activeTab, buildImagePayload, parseErrorResponse],
+    [aspectRatio, activeTab, selectedModel, buildImagePayload, parseErrorResponse],
   );
 
 
@@ -491,6 +516,35 @@ export default function EditorScreen() {
           >
             <Text style={[styles.aspectRatioText, aspectRatio === '9:16' && styles.aspectRatioTextActive]}>9:16 Portrait</Text>
           </TouchableOpacity>
+        </ScrollView>
+      </View>
+
+      <View style={styles.modelContainer}>
+        <Text style={styles.modelLabel}>AI Model</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.modelScroll}
+        >
+          {IMAGE_MODELS.map((model) => {
+            const isActive = selectedModel === model.id;
+            return (
+              <TouchableOpacity
+                key={model.id}
+                testID={`model-${model.id.replace(/[^a-z0-9]+/gi, '-')}`}
+                style={[styles.modelChip, isActive && styles.modelChipActive]}
+                onPress={() => setSelectedModel(model.id)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.modelChipName, isActive && styles.modelChipNameActive]} numberOfLines={1}>
+                  {model.name}
+                </Text>
+                <Text style={[styles.modelChipNote, isActive && styles.modelChipNoteActive]} numberOfLines={1}>
+                  {model.note}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
 
@@ -1088,5 +1142,48 @@ const styles = StyleSheet.create({
   },
   aspectRatioTextActive: {
     color: Colors.text,
+  },
+  modelContainer: {
+    paddingHorizontal: 20,
+    marginTop: 16,
+  },
+  modelLabel: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  modelScroll: {
+    gap: 8,
+    paddingRight: 20,
+  },
+  modelChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 180,
+  },
+  modelChipActive: {
+    backgroundColor: 'rgba(157, 78, 221, 0.18)',
+    borderColor: Colors.purple,
+  },
+  modelChipName: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: Colors.textSecondary,
+  },
+  modelChipNameActive: {
+    color: Colors.text,
+  },
+  modelChipNote: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  modelChipNoteActive: {
+    color: Colors.purple,
   },
 });
