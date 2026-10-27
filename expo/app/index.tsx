@@ -47,13 +47,20 @@ interface EditHistoryItem {
 const logTag = '[ShadowFrame Editor]' as const;
 
 const EDIT_MODEL = 'openai/gpt-image-2' as const;
+const FALLBACK_EDIT_MODEL = 'bytedance/seedream-5.0-pro' as const;
 const TOOLKIT_URL = process.env.EXPO_PUBLIC_TOOLKIT_URL ?? 'https://toolkit.rork.com';
 const TOOLKIT_KEY = process.env.EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY ?? '';
 const IMAGE_MODEL_HEADERS = {
   'ai-gateway-protocol-version': '0.0.1',
   'ai-image-model-specification-version': '4',
-  'ai-model-id': EDIT_MODEL,
 } as const;
+
+interface EditAttemptResult {
+  ok: boolean;
+  imageUri?: string;
+  reason?: 'blocked' | 'empty' | 'http';
+  detail?: string;
+}
 
 function resolveWritableDirectory(): string | null {
   const fileSystem = FileSystem as unknown as {
@@ -176,66 +183,109 @@ export default function EditorScreen() {
         imageCount: payload.length,
         mode: activeTab,
       });
-      const body = JSON.stringify({
-        model: EDIT_MODEL,
-        prompt: promptValue,
-        n: 1,
-        providerOptions: {},
-        size: aspectRatio === '9:16' ? '1024x1536' : '1536x1024',
-        files: payload,
-      });
-      let response: Response;
-      try {
-        response = await fetch(`${TOOLKIT_URL}/v2/vercel/v3/ai/image-model`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${TOOLKIT_KEY}`,
-            ...IMAGE_MODEL_HEADERS,
-          },
-          body,
-        });
-      } catch (networkError) {
-        console.log(logTag, 'Network error when calling edit endpoint', networkError);
-        const errorMessage = networkError instanceof Error ? networkError.message : 'Unknown network error';
-        if (errorMessage.includes('NetworkError') || errorMessage.includes('Failed to fetch')) {
-          throw new Error('Network connection failed. Please check your internet connection and try again.');
+
+      const performAttempt = async (modelId: string): Promise<EditAttemptResult> => {
+        // OpenAI image models take pixel dimensions via `size`; most other
+        // providers take the aspect ratio string directly.
+        const usesPixelSize = modelId.startsWith('openai/');
+        const body: Record<string, unknown> = {
+          model: modelId,
+          prompt: promptValue,
+          n: 1,
+          providerOptions: {},
+          files: payload,
+          ...(usesPixelSize
+            ? { size: aspectRatio === '9:16' ? '1024x1536' : '1536x1024' }
+            : { aspectRatio }),
+        };
+        let response: Response;
+        try {
+          response = await fetch(`${TOOLKIT_URL}/v2/vercel/v3/ai/image-model`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${TOOLKIT_KEY}`,
+              ...IMAGE_MODEL_HEADERS,
+              'ai-model-id': modelId,
+            },
+            body: JSON.stringify(body),
+          });
+        } catch (networkError) {
+          console.log(logTag, 'Network error when calling edit endpoint', networkError);
+          const errorMessage = networkError instanceof Error ? networkError.message : 'Unknown network error';
+          if (errorMessage.includes('NetworkError') || errorMessage.includes('Failed to fetch')) {
+            throw new Error('Network connection failed. Please check your internet connection and try again.');
+          }
+          throw new Error(`Could not connect to the server: ${errorMessage}`);
         }
-        throw new Error(`Could not connect to the server: ${errorMessage}`);
-      }
-      console.log(logTag, 'Edit response status', response.status);
-      if (!response.ok) {
-        if (response.status === 413) {
-          throw new Error('The images are too large for this request. Try smaller or fewer photos.');
+        console.log(logTag, `Edit response status from ${modelId}`, response.status);
+        if (!response.ok) {
+          if (response.status === 413) {
+            throw new Error('The images are too large for this request. Try smaller or fewer photos.');
+          }
+          const message = await parseErrorResponse(response);
+          const lower = message.toLowerCase();
+          return {
+            ok: false,
+            reason: lower.includes('blocked') || lower.includes('safety') ? 'blocked' : 'http',
+            detail: message,
+          };
         }
-        const message = await parseErrorResponse(response);
-        throw new Error(message);
-      }
-      let data: unknown;
-      try {
-        data = await response.json();
-      } catch (jsonError) {
-        console.log(logTag, 'Failed to parse edit response', jsonError);
-        throw new Error('Received an unexpected response from the edit service.');
-      }
-      const resultImages = (data as { images?: unknown; error?: unknown; text?: unknown }).images;
-      const firstImage = Array.isArray(resultImages) && typeof resultImages[0] === 'string' ? resultImages[0] : undefined;
-      if (!firstImage || firstImage.length === 0) {
-        console.log(logTag, 'No image payload returned', data);
-        const messageCandidates = [
-          typeof (data as { error?: unknown }).error === 'string' ? (data as { error?: string }).error : undefined,
-          typeof (data as { text?: unknown }).text === 'string' ? (data as { text?: string }).text : undefined,
-        ]
-          .filter((candidate): candidate is string => Boolean(candidate))
-          .map((candidate) => candidate.toLowerCase());
-        if (messageCandidates.some((candidate) => candidate.includes('unable') || candidate.includes('cannot') || candidate.includes('blocked') || candidate.includes('safety'))) {
-          throw new Error('Request blocked by content safety. Use neutral, descriptive language. Describe colors, lighting, composition, and style instead of sensitive content.');
+        let data: unknown;
+        try {
+          data = await response.json();
+        } catch (jsonError) {
+          console.log(logTag, 'Failed to parse edit response', jsonError);
+          throw new Error('Received an unexpected response from the edit service.');
         }
-        throw new Error('No edited image was produced. Try a different prompt.');
+        const resultData = data as { images?: unknown; error?: unknown; text?: unknown };
+        const resultImages = resultData.images;
+        const firstImage = Array.isArray(resultImages) && typeof resultImages[0] === 'string' ? resultImages[0] : undefined;
+        if (!firstImage || firstImage.length === 0) {
+          console.log(logTag, 'No image payload returned', data);
+          const refusalText = [
+            typeof resultData.error === 'string' ? resultData.error : undefined,
+            typeof resultData.error === 'object' && resultData.error !== null && typeof (resultData.error as { message?: unknown }).message === 'string'
+              ? (resultData.error as { message: string }).message
+              : undefined,
+            typeof resultData.text === 'string' ? resultData.text : undefined,
+          ].find((candidate): candidate is string => Boolean(candidate && candidate.length > 0));
+          const lower = refusalText?.toLowerCase() ?? '';
+          const declined = lower.includes('unable') || lower.includes('cannot') || lower.includes("can't") || lower.includes('blocked') || lower.includes('safety') || lower.includes('moderation');
+          return {
+            ok: false,
+            reason: declined ? 'blocked' : 'empty',
+            detail: refusalText,
+          };
+        }
+        const composed = firstImage.startsWith('data:') ? firstImage : `data:image/png;base64,${stripDataUriPrefix(firstImage)}`;
+        return { ok: true, imageUri: composed };
+      };
+
+      const primary = await performAttempt(EDIT_MODEL);
+      if (primary.ok && primary.imageUri) {
+        console.log(logTag, 'Edit request succeeded');
+        return { imageUri: primary.imageUri, promptUsed: promptValue };
       }
-      const composed = firstImage.startsWith('data:') ? firstImage : `data:image/png;base64,${stripDataUriPrefix(firstImage)}`;
-      console.log(logTag, 'Edit request succeeded');
-      return { imageUri: composed, promptUsed: promptValue };
+
+      // The primary model declined the request or returned nothing. A second
+      // provider applies different (still provider-side) policies, so a
+      // legitimate edit may succeed there. Every provider still enforces its
+      // own content rules; nothing is bypassed.
+      if (primary.reason === 'blocked' || primary.reason === 'empty') {
+        console.log(logTag, 'Primary model declined, retrying with fallback model', FALLBACK_EDIT_MODEL);
+        const fallback = await performAttempt(FALLBACK_EDIT_MODEL);
+        if (fallback.ok && fallback.imageUri) {
+          console.log(logTag, 'Fallback edit request succeeded');
+          return { imageUri: fallback.imageUri, promptUsed: promptValue };
+        }
+        const primaryDetail = primary.detail ? ` The first model said: "${primary.detail.slice(0, 180)}"` : '';
+        throw new Error(
+          `Both image models declined this edit.${primaryDetail} Try rewording with neutral, descriptive language — describe colors, lighting, composition, and style instead of sensitive content.`,
+        );
+      }
+
+      throw new Error(primary.detail ?? 'Could not edit the image. Try again in a moment.');
     },
     [aspectRatio, activeTab, buildImagePayload, parseErrorResponse],
   );
